@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:math';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; //  Para teclado
+import 'package:flutter/services.dart';
 
 /// Pantalla principal de juego.
 /// Recibe el asset del carro que eligió el usuario.
@@ -17,14 +18,13 @@ class GamePage extends StatefulWidget {
   State<GamePage> createState() => _GamePageState();
 }
 
-/// Modelo de obstáculo / power-up
+/// Modelo de obstáculo
 class _Obstacle {
   final String assetPath;
-  final int lane; // carril donde está (0..laneCount-1)
-  double y; // posición vertical en px (centro de la imagen)
+  final int lane; // carril (0..laneCount-1)
+  double y; // posición vertical (centro)
   final double width;
   final double height;
-  final bool isPowerUp; // true = gasolina
 
   _Obstacle({
     required this.assetPath,
@@ -32,85 +32,115 @@ class _Obstacle {
     required this.y,
     required this.width,
     required this.height,
-    this.isPowerUp = false,
+  });
+}
+
+/// Tipo de power-up
+enum _PowerUpType { fuel, tire }
+
+/// Modelo de power-up
+class _PowerUp {
+  final _PowerUpType type;
+  final String assetPath;
+  final int lane;
+  double y;
+  final double width;
+  final double height;
+
+  _PowerUp({
+    required this.type,
+    required this.assetPath,
+    required this.lane,
+    required this.y,
+    required this.width,
+    required this.height,
   });
 }
 
 class _GamePageState extends State<GamePage> {
-  // 🔹 Número de carriles
+  // --- Parámetros de carretera / carriles ---
   static const int laneCount = 3;
 
-  // 🔹 Estado del jugador
-  int playerLane = 1; // 0 = izq, laneCount-1 = der
-
-  // 🔹 Obstáculos / powerups en pantalla
-  final List<_Obstacle> _obstacles = [];
-  final Random _random = Random();
-
-  // 🔹 Loop del juego
-  Timer? _gameLoopTimer;
-  double _spawnTimer = 0.0;
-  double _spawnInterval = 1.8; // segundos (modo fácil)
-  double _scrollSpeed = 260; // px por segundo
-
-  // 🔹 Para tamaño / colisión (se actualiza en build)
-  double _screenHeight = 0;
-  double _laneWidth = 0;
-  double _roadLeft = 0;
+  // --- Estado del jugador ---
+  int playerLane = 1; // 0 izquierda, laneCount-1 derecha
   double _carWidth = 0;
   double _carHeight = 0;
   double _playerY = 0;
 
+  // Llantas como “vidas”
+  final int _maxTires = 3;
+  int _tiresLeft = 3;
+
+  // --- Obstáculos y power-ups ---
+  final List<_Obstacle> _obstacles = [];
+  final List<_PowerUp> _powerUps = [];
+  final Random _random = Random();
+
+  // --- Loop de juego ---
+  Timer? _gameLoopTimer;
+  double _scrollSpeed = 260; // px/s
+
+  // Timers de spawn
+  double _spawnObstacleTimer = 0.0;
+  double _spawnObstacleInterval = 1.4; // segundos
+
+  double _spawnFuelTimer = 0.0;
+  double _spawnFuelInterval = 6.0; // un bidón ocasional
+
+  double _spawnTireTimer = 0.0;
+  double _spawnTireInterval = 10.0; // llanta ocasional
+
+  // --- Tamaños calculados en build ---
+  double _screenHeight = 0;
+  double _laneWidth = 0;
+  double _roadLeft = 0;
+
   bool _isGameOver = false;
 
-  // 🔹 GASOLINA (0.0 a 1.0)
-  double _fuel = 1.0;
-  final double _fuelConsumptionPerSecond = 0.02; // 2% por segundo aprox.
-  final double _fuelPickupAmount = 0.30; // 30% por gasolinera
+  // --- Gasolina ---
+  double _fuel = 1.0; // 0..1
+  final double _fuelConsumptionPerSecond = 0.02;
 
-  // 🔹 Teclado
-  final FocusNode _focusNode = FocusNode();
+  // Para evitar que un mismo frame cuente múltiples golpes
+  bool _handledCollisionThisFrame = false;
 
   @override
   void initState() {
     super.initState();
     _startLoop();
-
-    // Pedir foco para escuchar teclado
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _focusNode.requestFocus();
-    });
   }
 
   void _startLoop() {
     _gameLoopTimer?.cancel();
     _isGameOver = false;
     _obstacles.clear();
-    _spawnTimer = 0.0;
+    _powerUps.clear();
 
-    // Restablecer gasolina al reiniciar
+    _spawnObstacleTimer = 0.0;
+    _spawnFuelTimer = 0.0;
+    _spawnTireTimer = 0.0;
+
     _fuel = 1.0;
+    _tiresLeft = _maxTires;
 
     _gameLoopTimer = Timer.periodic(
       const Duration(milliseconds: 16),
-          (timer) {
-        // ~60 FPS -> 0.016 segundos por frame
-        _updateGame(0.016);
-      },
+          (timer) => _updateGame(0.016), // ~60 FPS
     );
   }
 
   @override
   void dispose() {
     _gameLoopTimer?.cancel();
-    _focusNode.dispose();
     super.dispose();
   }
 
   void _updateGame(double dt) {
     if (_isGameOver || _screenHeight == 0) return;
 
-    // 🔻 Consumir gasolina
+    _handledCollisionThisFrame = false;
+
+    // Consumo de gasolina
     _fuel -= _fuelConsumptionPerSecond * dt;
     if (_fuel <= 0) {
       _fuel = 0;
@@ -118,47 +148,54 @@ class _GamePageState extends State<GamePage> {
       return;
     }
 
-    // Mover obstáculos / powerups hacia abajo
+    // Mover obstáculos
     for (final o in _obstacles) {
       o.y += _scrollSpeed * dt;
     }
-
-    // Eliminar los que ya salieron de pantalla
     _obstacles.removeWhere((o) => o.y - o.height / 2 > _screenHeight + 50);
 
-    // Spawn de nuevos obstáculos / powerups
-    _spawnTimer += dt;
-    if (_spawnTimer >= _spawnInterval) {
-      _spawnTimer = 0;
+    // Mover power-ups
+    for (final p in _powerUps) {
+      p.y += _scrollSpeed * dt;
+    }
+    _powerUps.removeWhere((p) => p.y - p.height / 2 > _screenHeight + 50);
+
+    // Spawn obstáculos
+    _spawnObstacleTimer += dt;
+    if (_spawnObstacleTimer >= _spawnObstacleInterval) {
+      _spawnObstacleTimer = 0;
       _spawnObstacle();
     }
 
-    // Verificar colisiones
-    _checkCollisions();
+    // Spawn power-up gasolina
+    _spawnFuelTimer += dt;
+    if (_spawnFuelTimer >= _spawnFuelInterval) {
+      _spawnFuelTimer = 0;
+      _spawnFuelPowerUp();
+    }
 
-    // Actualizar UI
+    // Spawn power-up llanta
+    _spawnTireTimer += dt;
+    if (_spawnTireTimer >= _spawnTireInterval) {
+      _spawnTireTimer = 0;
+      _spawnTirePowerUp();
+    }
+
+    // Colisiones
+    _checkObstacleCollisions();
+    _checkPowerUpCollisions();
+
     if (mounted) {
       setState(() {});
     }
   }
 
+  // -------------------- SPAWN --------------------
+
   void _spawnObstacle() {
-    if (_laneWidth == 0 || _screenHeight == 0) return;
+    if (_laneWidth == 0) return;
 
-    // 🔹 1) Evitar demasiados obstáculos en pantalla al mismo tiempo
-    // Contamos solo los que ya son visibles (alguna parte está dentro de la pantalla)
-    final visibleObstacles = _obstacles.where((o) {
-      final top = o.y - o.height / 2;
-      final bottom = o.y + o.height / 2;
-      return bottom > 0 && top < _screenHeight;
-    }).length;
-
-    // Si ya hay 1 obstáculo visible, no generamos otro todavía
-    if (visibleObstacles >= 1) {
-      return;
-    }
-
-    // 🔹 2) Elegir tipo de obstáculo
+    // Tipo de obstáculo
     final int type = _random.nextInt(4); // 0..3
     String asset;
     double width;
@@ -168,24 +205,24 @@ class _GamePageState extends State<GamePage> {
     final carHeight = carWidth * 2;
 
     switch (type) {
-      case 0: // bache 1:1
+      case 0: // bache
         asset = 'assets/obstaculos/bache.png';
         final size = _laneWidth * 0.7;
         width = size;
         height = size;
         break;
-      case 1: // mancha de aceite 1:1
+      case 1: // mancha aceite
         asset = 'assets/obstaculos/manchaaceite.png';
         final size = _laneWidth * 0.7;
         width = size;
         height = size;
         break;
-      case 2: // cono 1:0.5 aprox (más alto que ancho)
+      case 2: // cono
         asset = 'assets/obstaculos/cono.png';
         width = _laneWidth * 0.4;
         height = width * 1.5;
         break;
-      case 3: // carro enemigo negro 2:1 (como tu carro)
+      case 3: // carro enemigo
       default:
         asset = 'assets/obstaculos/negro_car.png';
         width = carWidth * 0.9;
@@ -193,7 +230,6 @@ class _GamePageState extends State<GamePage> {
         break;
     }
 
-    // Posición inicial arriba de la pantalla
     final double yStart = -height;
 
     // Carril aleatorio
@@ -210,104 +246,131 @@ class _GamePageState extends State<GamePage> {
     );
   }
 
+  void _spawnFuelPowerUp() {
+    if (_laneWidth == 0) return;
 
-  // ---------- HITBOX POR TIPO DE OBSTÁCULO / POWERUP ----------
+    final width = _laneWidth * 0.4;
+    final height = width * 1.2;
+    final yStart = -height;
+    final lane = _random.nextInt(laneCount);
 
-  double _obstacleHitboxFactor(String assetPath, bool isPowerUp) {
-    if (isPowerUp) {
-      // hitbox un poco más grande para que sea fácil tomarlo
-      return 0.35;
-    }
+    _powerUps.add(
+      _PowerUp(
+        type: _PowerUpType.fuel,
+        assetPath: 'assets/powerups/gasolina_powerup.png',
+        lane: lane,
+        y: yStart,
+        width: width,
+        height: height,
+      ),
+    );
+  }
 
-    if (assetPath.contains('bache')) {
-      // bache: redondo y pequeño
-      return 0.28;
-    } else if (assetPath.contains('mancha')) {
-      // mancha de aceite: muy plana
-      return 0.22;
-    } else if (assetPath.contains('cono')) {
-      // cono: más alto
-      return 0.35;
-    } else if (assetPath.contains('negro_car')) {
-      // carro enemigo: similar al jugador
-      return 0.30;
-    }
+  void _spawnTirePowerUp() {
+    if (_laneWidth == 0) return;
 
-    // default
+    final width = _laneWidth * 0.5;
+    final height = width;
+    final yStart = -height;
+    final lane = _random.nextInt(laneCount);
+
+    _powerUps.add(
+      _PowerUp(
+        type: _PowerUpType.tire,
+        assetPath: 'assets/powerups/llanta_powerup.png',
+        lane: lane,
+        y: yStart,
+        width: width,
+        height: height,
+      ),
+    );
+  }
+
+  // -------------------- COLISIONES --------------------
+
+  // Hitbox vertical del jugador
+  double get _playerTop => _playerY - _carHeight * 0.30;
+  double get _playerBottom => _playerY + _carHeight * 0.30;
+
+  double _obstacleHitboxFactor(String assetPath) {
+    if (assetPath.contains('bache')) return 0.28;
+    if (assetPath.contains('mancha')) return 0.22;
+    if (assetPath.contains('cono')) return 0.35;
+    if (assetPath.contains('negro_car')) return 0.30;
     return 0.30;
   }
 
-  void _checkCollisions() {
+  void _checkObstacleCollisions() {
     if (_laneWidth == 0 || _carHeight == 0) return;
+    if (_handledCollisionThisFrame) return;
 
-    // 🔹 Hitbox del jugador (reducido)
-    const double playerFactor = 0.30;
-    final double playerTop = _playerY - _carHeight * playerFactor;
-    final double playerBottom = _playerY + _carHeight * playerFactor;
-
-    // Recorremos de atrás hacia adelante para poder remover
-    for (int i = _obstacles.length - 1; i >= 0; i--) {
-      final o = _obstacles[i];
-
+    // Se hace copia para poder remover dentro del loop
+    for (final o in List<_Obstacle>.from(_obstacles)) {
       if (o.lane != playerLane) continue;
 
-      // 🔹 Hitbox vertical según el tipo de obstáculo / powerup
-      final double factor = _obstacleHitboxFactor(o.assetPath, o.isPowerUp);
-      final double obstacleTop = o.y - o.height * factor;
-      final double obstacleBottom = o.y + o.height * factor;
+      final factor = _obstacleHitboxFactor(o.assetPath);
+      final obstacleTop = o.y - o.height * factor;
+      final obstacleBottom = o.y + o.height * factor;
 
-      final bool overlapVertically =
-          obstacleBottom > playerTop && obstacleTop < playerBottom;
+      final overlapVertically =
+          obstacleBottom > _playerTop && obstacleTop < _playerBottom;
 
-      if (!overlapVertically) continue;
-
-      if (o.isPowerUp) {
-        // ✅ Tomó gasolinera
-        _obstacles.removeAt(i);
-        _fuel += _fuelPickupAmount;
-        if (_fuel > 1.0) _fuel = 1.0;
-      } else {
-        // ☠️ Chocó con obstáculo
-        _onCrash();
+      if (overlapVertically) {
+        _handledCollisionThisFrame = true;
+        _onHitObstacle(o);
         break;
       }
     }
   }
 
-  void _onCrash() {
-    _isGameOver = true;
-    _gameLoopTimer?.cancel();
+  void _onHitObstacle(_Obstacle obstacle) {
+    // Cada choque con obstáculo consume UNA llanta.
+    if (_tiresLeft > 0) {
+      _tiresLeft--;
+    }
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Game Over'),
-          content: const Text('Chocaste con un obstáculo.'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                setState(() {
-                  playerLane = 1;
-                });
-                _startLoop();
-              },
-              child: const Text('Reintentar'),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                Navigator.pop(context); // volver al menú
-              },
-              child: const Text('Salir'),
-            ),
-          ],
-        );
-      },
-    );
+    _obstacles.remove(obstacle);
+
+    if (_tiresLeft <= 0) {
+      _tiresLeft = 0;
+      _onNoTires();
+    }
   }
+
+  void _checkPowerUpCollisions() {
+    if (_laneWidth == 0 || _carHeight == 0) return;
+
+    for (final p in List<_PowerUp>.from(_powerUps)) {
+      if (p.lane != playerLane) continue;
+
+      final powerUpTop = p.y - p.height * 0.3;
+      final powerUpBottom = p.y + p.height * 0.3;
+
+      final overlapVertically =
+          powerUpBottom > _playerTop && powerUpTop < _playerBottom;
+
+      if (overlapVertically) {
+        _applyPowerUp(p);
+        _powerUps.remove(p);
+      }
+    }
+  }
+
+  void _applyPowerUp(_PowerUp p) {
+    switch (p.type) {
+      case _PowerUpType.fuel:
+        _fuel += 0.35; // recarga parcial
+        if (_fuel > 1.0) _fuel = 1.0;
+        break;
+      case _PowerUpType.tire:
+        if (_tiresLeft < _maxTires) {
+          _tiresLeft++;
+        }
+        break;
+    }
+  }
+
+  // -------------------- GAME OVERS --------------------
 
   void _onOutOfFuel() {
     _isGameOver = true;
@@ -324,9 +387,7 @@ class _GamePageState extends State<GamePage> {
             TextButton(
               onPressed: () {
                 Navigator.pop(context);
-                setState(() {
-                  playerLane = 1;
-                });
+                setState(() => playerLane = 1);
                 _startLoop();
               },
               child: const Text('Reintentar'),
@@ -334,7 +395,7 @@ class _GamePageState extends State<GamePage> {
             TextButton(
               onPressed: () {
                 Navigator.pop(context);
-                Navigator.pop(context); // volver al menú
+                Navigator.pop(context);
               },
               child: const Text('Salir'),
             ),
@@ -343,6 +404,42 @@ class _GamePageState extends State<GamePage> {
       },
     );
   }
+
+  void _onNoTires() {
+    _isGameOver = true;
+    _gameLoopTimer?.cancel();
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Sin llantas de repuesto'),
+          content:
+          const Text('Ya no tienes llantas para seguir en la carretera.'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                setState(() => playerLane = 1);
+                _startLoop();
+              },
+              child: const Text('Reintentar'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                Navigator.pop(context);
+              },
+              child: const Text('Salir'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // -------------------- CONTROLES --------------------
 
   void _moveLeft() {
     setState(() {
@@ -356,19 +453,7 @@ class _GamePageState extends State<GamePage> {
     });
   }
 
-  // ⌨️ Manejo de teclas
-  void _handleKey(RawKeyEvent event) {
-    if (event is! RawKeyDownEvent) return;
-
-    final key = event.logicalKey;
-    if (key == LogicalKeyboardKey.arrowLeft ||
-        key == LogicalKeyboardKey.keyA) {
-      _moveLeft();
-    } else if (key == LogicalKeyboardKey.arrowRight ||
-        key == LogicalKeyboardKey.keyD) {
-      _moveRight();
-    }
-  }
+  // -------------------- UI --------------------
 
   @override
   Widget build(BuildContext context) {
@@ -379,24 +464,27 @@ class _GamePageState extends State<GamePage> {
         backgroundColor: Colors.grey.shade800,
       ),
       body: RawKeyboardListener(
-        focusNode: _focusNode,
-        onKey: _handleKey,
+        focusNode: FocusNode()..requestFocus(),
+        onKey: (event) {
+          if (event is RawKeyDownEvent) {
+            if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+              _moveLeft();
+            } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+              _moveRight();
+            }
+          }
+        },
         child: LayoutBuilder(
           builder: (context, constraints) {
             _screenHeight = constraints.maxHeight;
 
-            // Ancho de carretera (70% de la pantalla)
             final roadWidth = constraints.maxWidth * 0.7;
             _laneWidth = roadWidth / laneCount;
 
-            // Tamaño del carro (2:1, carril 1.1x más ancho que el carro)
             _carWidth = _laneWidth / 1.1;
             _carHeight = _carWidth * 2;
 
-            // Posición horizontal de la carretera
             _roadLeft = (constraints.maxWidth - roadWidth) / 2;
-
-            // Y del jugador (80% de la altura de pantalla)
             _playerY = constraints.maxHeight * 0.8;
 
             return Stack(
@@ -429,18 +517,24 @@ class _GamePageState extends State<GamePage> {
                     ),
                   ),
 
-                // Obstáculos / powerups
+                // Obstáculos
                 for (final o in _obstacles)
                   Positioned(
-                    left:
-                    _roadLeft + (o.lane + 0.5) * _laneWidth - o.width / 2,
+                    left: _roadLeft + (o.lane + 0.5) * _laneWidth - o.width / 2,
                     top: o.y - o.height / 2,
                     width: o.width,
                     height: o.height,
-                    child: Image.asset(
-                      o.assetPath,
-                      fit: BoxFit.contain,
-                    ),
+                    child: Image.asset(o.assetPath, fit: BoxFit.contain),
+                  ),
+
+                // Power-ups
+                for (final p in _powerUps)
+                  Positioned(
+                    left: _roadLeft + (p.lane + 0.5) * _laneWidth - p.width / 2,
+                    top: p.y - p.height / 2,
+                    width: p.width,
+                    height: p.height,
+                    child: Image.asset(p.assetPath, fit: BoxFit.contain),
                   ),
 
                 // Carro del jugador
@@ -451,13 +545,10 @@ class _GamePageState extends State<GamePage> {
                   top: _playerY - _carHeight / 2,
                   width: _carWidth,
                   height: _carHeight,
-                  child: Image.asset(
-                    widget.carAsset,
-                    fit: BoxFit.contain,
-                  ),
+                  child: Image.asset(widget.carAsset, fit: BoxFit.contain),
                 ),
 
-                // 🔹 HUD: Barra de gasolina
+                // HUD gasolina + llantas
                 Positioned(
                   left: 16,
                   right: 16,
@@ -465,6 +556,7 @@ class _GamePageState extends State<GamePage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Gasolina
                       Row(
                         children: [
                           const Icon(Icons.local_gas_station,
@@ -495,16 +587,48 @@ class _GamePageState extends State<GamePage> {
                           minHeight: 10,
                           backgroundColor: Colors.grey.shade700,
                           valueColor:
-                          const AlwaysStoppedAnimation<Color>(
-                            Colors.orangeAccent,
-                          ),
+                          const AlwaysStoppedAnimation(Colors.orangeAccent),
                         ),
+                      ),
+                      const SizedBox(height: 8),
+
+                      // Llantas
+                      Row(
+                        children: [
+                          const Icon(Icons.circle_outlined,
+                              size: 18, color: Colors.white70),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Llantas:',
+                            style: TextStyle(
+                              color: Colors.grey.shade100,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Row(
+                            children: List.generate(_maxTires, (index) {
+                              final filled = index < _tiresLeft;
+                              return Padding(
+                                padding:
+                                const EdgeInsets.symmetric(horizontal: 2),
+                                child: Icon(
+                                  Icons.circle,
+                                  size: 10,
+                                  color: filled
+                                      ? Colors.lightBlueAccent
+                                      : Colors.grey.shade600,
+                                ),
+                              );
+                            }),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
 
-                // Controles izquierda/derecha
+                // Botones táctiles izquierda / derecha
                 Positioned(
                   left: 16,
                   bottom: 16,
