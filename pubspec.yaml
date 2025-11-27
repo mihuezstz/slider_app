@@ -61,6 +61,8 @@ flutter:
     - assets/powerups/
     - assets/escenarios/
     - assets/sonidos/
+    - assets/logo_unison.png
+
 
 
   # An image asset can refer to one or more resolution-specific "variants", see

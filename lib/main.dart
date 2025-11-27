@@ -1,13 +1,15 @@
+import 'dart:js' as js;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import 'services/supabase_service.dart';
 import 'widgets/draggable_car.dart';
 import 'game_page.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'dart:js' as js; // para leer window.env en Web
 
-///  Lista de carros disponibles
+/// Lista de carros disponibles
 const List<String> kCarAssets = [
   'assets/cars/bochito_car.png',
   'assets/cars/chevyblue_car.png',
@@ -26,24 +28,19 @@ const List<String> kCarNames = [
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Inicializar Supabase distinto para Web / Mobile
   if (kIsWeb) {
-    // 🌐 WEB → leer variables desde web/icons/config.js
-    final url = js.context['env']?['SUPABASE_URL'] as String?;
-    final anon = js.context['env']?['SUPABASE_ANON'] as String?;
+    // En web leemos las variables desde web/icons/config.js
+    final url = js.context['env']['SUPABASE_URL'] as String?;
+    final anon = js.context['env']['SUPABASE_ANON'] as String?;
 
     if (url == null || anon == null) {
-      throw Exception(
-        'No se encontraron SUPABASE_URL o SUPABASE_ANON en window.env. '
-            'Revisa tu config.js.',
-      );
+      throw Exception('No se encontraron SUPABASE_URL / SUPABASE_ANON en config.js');
     }
 
-    await Supabase.initialize(
-      url: url,
-      anonKey: anon,
-    );
+    await Supabase.initialize(url: url, anonKey: anon);
   } else {
-    // 📱 ESCRITORIO / MÓVIL → usar .env normalmente
+    // En móvil / escritorio usamos el archivo .env
     await dotenv.load(fileName: ".env");
 
     await Supabase.initialize(
@@ -60,10 +57,18 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final baseTheme = ThemeData(
+      colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+      useMaterial3: true,
+    );
+
     return MaterialApp(
       title: 'Slider App',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+      theme: baseTheme.copyWith(
+        appBarTheme: const AppBarTheme(
+          centerTitle: true,
+          elevation: 1,
+        ),
       ),
       home: const MyHomePage(title: 'Slider App'),
     );
@@ -80,15 +85,24 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
   late final SupabaseService _supabaseService;
-  bool _isSignedIn = false;
-  bool _isVertical = true;
 
-  ///  Carro seleccionado
+  // Nombre del jugador
+  final TextEditingController _nameController = TextEditingController();
+  String _playerName = '';
+
+  // Carro seleccionado
   int _selectedCarIndex = 0;
 
-  /// Obtiene el asset actual
+  // Créditos acumulados (monedas)
+  int _credits = 0;
+
+  // Para saber si ya se hizo sign-in del usuario de servicio
+  bool _isSignedIn = false;
+
+  // Layout vertical / horizontal para la pantalla principal
+  bool _isVertical = true;
+
   String get _selectedCarAsset =>
       kCarAssets[_selectedCarIndex.clamp(0, kCarAssets.length - 1)];
 
@@ -96,10 +110,51 @@ class _MyHomePageState extends State<MyHomePage> {
   void initState() {
     super.initState();
     _supabaseService = SupabaseService();
-    _initializeData();
+    _signInServiceUser();
   }
 
-  /// Abre la selección de carro
+  /// Hace sign-in con el usuario de servicio de Supabase (AUTH_EMAIL / AUTH_PASSWORD)
+  Future<void> _signInServiceUser() async {
+    try {
+      await _supabaseService.signIn(
+        email: dotenv.env['AUTH_EMAIL'] ?? '',
+        password: dotenv.env['AUTH_PASSWORD'] ?? '',
+      );
+      setState(() {
+        _isSignedIn = true;
+      });
+    } catch (e) {
+      // Solo mostramos un snack si falla, pero el juego puede seguir sin Supabase
+      debugPrint('Error al iniciar sesión en Supabase: $e');
+    }
+  }
+
+  /// Carga créditos desde Supabase usando el nombre actual del jugador
+  Future<void> _loadCreditsFromSupabase() async {
+    if (!_isSignedIn || _playerName.isEmpty) return;
+
+    final points = await _supabaseService.retrievePoints(
+      playerName: _playerName,
+    );
+
+    if (points != null) {
+      setState(() {
+        _credits = points;
+      });
+    }
+  }
+
+  /// Guarda créditos en Supabase para el jugador actual
+  Future<void> _saveCreditsToSupabase() async {
+    if (!_isSignedIn || _playerName.isEmpty) return;
+
+    await _supabaseService.checkAndUpsertPlayer(
+      playerName: _playerName,
+      score: _credits,
+    );
+  }
+
+  /// Abre el selector de carro en un bottom sheet
   void _openCarSelector() {
     showModalBottomSheet(
       context: context,
@@ -131,9 +186,24 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  ///  Inicia el juego con el carro seleccionado
-  void _startGame() {
-    Navigator.push(
+  /// Cambia de layout vertical a horizontal en la pantalla principal
+  void _toggleOrientation() {
+    setState(() => _isVertical = !_isVertical);
+  }
+
+  /// Inicia el juego y recibe las monedas ganadas al salir
+  Future<void> _startGame() async {
+    if (_playerName.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Escribe tu nombre antes de jugar.')),
+      );
+      return;
+    }
+
+    // Cargar créditos previos (por si existen en Supabase)
+    await _loadCreditsFromSupabase();
+
+    final coinsEarned = await Navigator.push<int>(
       context,
       MaterialPageRoute(
         builder: (context) => GamePage(
@@ -141,40 +211,19 @@ class _MyHomePageState extends State<MyHomePage> {
         ),
       ),
     );
-  }
 
-  ///  Cambia orientación
-  void _toggleOrientation() {
-    setState(() => _isVertical = !_isVertical);
-  }
-
-  /// Inicializa datos desde Supabase
-  Future<void> _initializeData() async {
-    if (!_isSignedIn) {
-      await _supabaseService.signIn(
-        email: dotenv.env['AUTH_EMAIL']!,
-        password: dotenv.env['AUTH_PASSWORD']!,
-      );
-
-      final points = await _supabaseService.retrievePoints(
-        playerName: 'Spongebob',
-      );
-
-      if (points != null) {
-        setState(() {
-          _counter = points;
-          _isSignedIn = true;
-        });
-      }
+    if (coinsEarned != null && coinsEarned > 0) {
+      setState(() {
+        _credits += coinsEarned;
+      });
+      await _saveCreditsToSupabase();
     }
   }
 
-  void _incrementCounter() {
-    setState(() => _counter++);
-    _supabaseService.checkAndUpsertPlayer(
-      playerName: 'Spongebob',
-      score: _counter,
-    );
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
   }
 
   @override
@@ -198,84 +247,260 @@ class _MyHomePageState extends State<MyHomePage> {
         ],
       ),
       body: Center(
-        child: _isVertical ? _buildVerticalLayout() : _buildHorizontalLayout(),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: _isVertical ? _buildVerticalLayout() : _buildHorizontalLayout(),
+        ),
       ),
     );
   }
 
-  ///  Layout vertical
+  /// Layout principal en orientación vertical
   Widget _buildVerticalLayout() {
     return Column(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: <Widget>[
-        const Spacer(flex: 2),
-
-        Column(
+      children: [
+        // Logo y texto superior
+        Row(
           children: [
-            const Text('You have pushed the button this many times:'),
-            const SizedBox(height: 20),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineLarge,
+            SizedBox(
+              width: 56,
+              height: 56,
+              child: Image.asset('assets/logo_unison.png'),
             ),
-            const SizedBox(height: 12),
-            Text(
-              'Carro: ${kCarNames[_selectedCarIndex]}',
-              style: const TextStyle(fontSize: 16),
-            ),
-            const SizedBox(height: 16),
-
-            /// 🔹 Botón JUGAR
-            FilledButton.icon(
-              onPressed: _startGame,
-              icon: const Icon(Icons.play_arrow),
-              label: const Text('Jugar'),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '4146 • Desarrollo de Aplicaciones Móviles',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
             ),
           ],
         ),
 
-        const Spacer(flex: 2),
+        const SizedBox(height: 16),
 
+        // Configuración del jugador
+        Card(
+          elevation: 2,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Configuración',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Nombre de jugador',
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (value) {
+                    setState(() {
+                      _playerName = value.trim();
+                    });
+                  },
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    const Text('Carro: '),
+                    Text(
+                      kCarNames[_selectedCarIndex],
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const Spacer(),
+                    TextButton.icon(
+                      onPressed: _openCarSelector,
+                      icon: const Icon(Icons.directions_car),
+                      label: const Text('Cambiar carro'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Icon(Icons.monetization_on_outlined, size: 20),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Créditos: $_credits',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: 'Recargar créditos desde Supabase',
+                      onPressed:
+                      _playerName.isEmpty ? null : _loadCreditsFromSupabase,
+                      icon: const Icon(Icons.refresh),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _startGame,
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('Jugar'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        const Spacer(),
+
+        // Carro draggable y logo abajo
         Padding(
           padding: const EdgeInsets.only(bottom: 20.0),
-          child: DraggableCar(
-            imagePath: _selectedCarAsset,
-            width: 120,
-            height: 70,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DraggableCar(
+                imagePath: _selectedCarAsset,
+                width: 120,
+                height: 70,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _playerName.isEmpty
+                    ? 'Escribe tu nombre para guardar tus créditos'
+                    : 'Jugador: $_playerName',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
           ),
         ),
       ],
     );
   }
 
-  ///  Layout horizontal
+  /// Layout principal en orientación horizontal
   Widget _buildHorizontalLayout() {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.only(left: 20.0),
-          child: DraggableCarHorizontal(
-            imagePath: _selectedCarAsset,
-            width: 60,
-            height: 100,
+      children: [
+        // Panel izquierdo: logo, configuración
+        Expanded(
+          flex: 2,
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  SizedBox(
+                    width: 56,
+                    height: 56,
+                    child: Image.asset('assets/logo_unison.png'),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '4146 • Desarrollo de Aplicaciones Móviles',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Card(
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: _nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Nombre de jugador',
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (value) {
+                          setState(() {
+                            _playerName = value.trim();
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          const Text('Carro: '),
+                          Text(
+                            kCarNames[_selectedCarIndex],
+                            style:
+                            const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          const Spacer(),
+                          TextButton.icon(
+                            onPressed: _openCarSelector,
+                            icon: const Icon(Icons.directions_car),
+                            label: const Text('Cambiar carro'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          const Icon(Icons.monetization_on_outlined, size: 20),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Créditos: $_credits',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w600),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            tooltip: 'Recargar créditos desde Supabase',
+                            onPressed: _playerName.isEmpty
+                                ? null
+                                : _loadCreditsFromSupabase,
+                            icon: const Icon(Icons.refresh),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: _startGame,
+                          icon: const Icon(Icons.play_arrow),
+                          label: const Text('Jugar'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-        const Spacer(flex: 2),
-        const Text('You have pushed the button this many times:'),
-        const SizedBox(width: 20),
-        Text(
-          '$_counter',
-          style: Theme.of(context).textTheme.headlineMedium,
+
+        const SizedBox(width: 24),
+
+        // Panel derecho: preview del carro
+        Expanded(
+          flex: 1,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              DraggableCarHorizontal(
+                imagePath: _selectedCarAsset,
+                width: 60,
+                height: 100,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                _playerName.isEmpty
+                    ? 'Escribe tu nombre para guardar tus créditos'
+                    : 'Jugador: $_playerName',
+              ),
+            ],
+          ),
         ),
-        const Spacer(flex: 2),
       ],
     );
   }
 }
-
