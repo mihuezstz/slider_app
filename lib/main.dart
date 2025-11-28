@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import 'package:slider_app/widgets/escenarios_page.dart';
 import 'services/supabase_service.dart';
 import 'widgets/draggable_car.dart';
 import 'game_page.dart';
@@ -206,8 +206,9 @@ class _MyHomePageState extends State<MyHomePage> {
     final coinsEarned = await Navigator.push<int>(
       context,
       MaterialPageRoute(
-        builder: (context) => GamePage(
+        builder: (context) => EscenariosPage(
           carAsset: _selectedCarAsset,
+          startingCoins: 0,
         ),
       ),
     );

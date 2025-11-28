@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -16,11 +15,15 @@ class GamePage extends StatefulWidget {
   // Callback para reportar cuántas monedas se ganaron en la corrida.
   final ValueChanged<int>? onCoinsEarned;
 
+  //Escenario seleccionado
+  final String escenario;
+
   const GamePage({
     super.key,
     required this.carAsset,
     this.startingCoins = 0,
     this.onCoinsEarned,
+    required this.escenario,
   });
 
   @override
@@ -545,7 +548,16 @@ class _GamePageState extends State<GamePage> {
         title: const Text('Juego'),
         backgroundColor: Colors.grey.shade800,
       ),
-      body: RawKeyboardListener(
+      body:Stack(
+        children: [
+          Positioned.fill(
+            child: Image.asset(
+              widget.escenario,
+              fit: BoxFit.cover,
+            ),
+          ),
+    
+       RawKeyboardListener(
         focusNode: _focusNode,
         autofocus: true,
         onKey: (event) {
@@ -560,7 +572,15 @@ class _GamePageState extends State<GamePage> {
             }
           }
         },
-        child: LayoutBuilder(
+        // Funcion con el contenido del juego
+        child: _buildGameContent(),
+       ),
+      ],
+    ),
+  );
+}
+Widget _buildGameContent() {
+        return LayoutBuilder(
           builder: (context, constraints) {
             _screenHeight = constraints.maxHeight;
 
@@ -580,8 +600,13 @@ class _GamePageState extends State<GamePage> {
 
             return Stack(
               children: [
-                // Fondo
-                Container(color: Colors.grey.shade900),
+                // Fondo  (muestra escenario)
+                Positioned.fill(
+                  child: Image.asset(
+                    widget.escenario,
+                    fit: BoxFit.cover
+                  ),
+                ),
 
                 // Carretera
                 Align(
@@ -771,8 +796,6 @@ class _GamePageState extends State<GamePage> {
               ],
             );
           },
-        ),
-      ),
-    );
+        );
   }
 }
