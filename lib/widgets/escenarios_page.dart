@@ -19,6 +19,10 @@ class EscenariosPage  extends StatelessWidget{
       'name': 'Snow',
       'image': 'assets/escenarios/snow_Background.png',
     },
+    {
+      'name': 'Bosque',
+      'image': 'assets/escenarios/bosque_Background.jpg',
+    }
   ];
 
   @override 

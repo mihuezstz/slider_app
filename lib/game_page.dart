@@ -553,7 +553,9 @@ class _GamePageState extends State<GamePage> {
           Positioned.fill(
             child: Image.asset(
               widget.escenario,
-              fit: BoxFit.cover,
+              repeat: ImageRepeat.repeatY,
+              fit: BoxFit.none,
+              scale: 2,
             ),
           ),
     
@@ -602,12 +604,16 @@ Widget _buildGameContent() {
               children: [
                 // Fondo  (muestra escenario)
                 Positioned.fill(
+                  child: FittedBox(
+                    fit: BoxFit.none,
                   child: Image.asset(
                     widget.escenario,
-                    fit: BoxFit.cover
+                    repeat: ImageRepeat.repeatY,
+                    width: MediaQuery.of(context).size.width,
+                    fit: BoxFit.fitWidth,
                   ),
                 ),
-
+              ),
                 // Carretera
                 Align(
                   alignment: Alignment.center,
