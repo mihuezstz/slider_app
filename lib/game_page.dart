@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -67,7 +66,6 @@ class _PowerUp {
 }
 
 class _GamePageState extends State<GamePage> {
-
   void _finishRunAndExit() {
     _gameLoopTimer?.cancel();             // detener loop
     widget.onCoinsEarned?.call(_coinsThisRun); // avisar cuántas monedas se ganaron
@@ -80,6 +78,12 @@ class _GamePageState extends State<GamePage> {
   // Estado del jugador
   int playerLane = 1;
 
+  // Nueva: carril objetivo y posición X actual para animar movimiento suave
+  int _targetLane = 1;
+  double _playerX = 0.0; // left en px del carro (se interpola hacia target)
+  final double _laneChangeSpeed = 200.0; // mayor = más rápido (ajusta a gusto)
+  bool _positionsInitialized = false;
+
   // Listas de entidades
   final List<_Obstacle> _obstacles = [];
   final List<_PowerUp> _powerUps = [];
@@ -89,7 +93,7 @@ class _GamePageState extends State<GamePage> {
   Timer? _gameLoopTimer;
   double _spawnTimer = 0.0;
   double _spawnInterval = 1.8; // más grande = más separados
-  double _scrollSpeed = 260;   // velocidad de caída
+  double _scrollSpeed = 500;   // velocidad de caída
 
   // Para cálculo de posiciones y colisiones
   double _screenHeight = 0;
@@ -116,6 +120,27 @@ class _GamePageState extends State<GamePage> {
   // Teclado
   final FocusNode _focusNode = FocusNode();
 
+  // Nueva: flags para teclas presionadas (izquierda/derecha)
+  bool _pressingLeft = false;
+  bool _pressingRight = false;
+  final double _lateralSpeed = 500.0; // velocidad de movimiento lateral
+
+  //variables para tilt cuando se desplaza IZQ/DER
+  double _prevPlayerX = 0.0;
+  double _lastLateralVelocity = 0.0; // px/s
+  final double _maxTilt = 0.3; // radianes
+
+  // Debug: mostrar contornos de hitbox
+  bool _showHitboxes = true;
+
+  // Control: si true el coche se recentra (interpolación) cuando no se está moviendo.
+  // Si false, al soltar la tecla el coche se queda en la posición X actual.
+  bool _autoCenter = false;
+
+  // Nueva: límites para la posición X del jugador
+  double _minPlayerX = 0;
+  double _maxPlayerX = 0;
+
   @override
   void initState() {
     super.initState();
@@ -141,11 +166,13 @@ class _GamePageState extends State<GamePage> {
 
     _fuel = 1.0;
     _spareTires = _maxTires;
-    // No reinicio monedas para que sientas progreso en las pruebas
-    // Si quieres que se reinicien: comenta la siguiente línea.
 
     _coinsThisRun = 0;   // reinicia monedas de la corrida
 
+    // Reiniciar objetivo de carril
+    playerLane = 1;
+    _targetLane = 1;
+    _positionsInitialized = false; // para re-inicializar _playerX en el next layout
 
     _gameLoopTimer = Timer.periodic(
       const Duration(milliseconds: 16),
@@ -186,7 +213,33 @@ class _GamePageState extends State<GamePage> {
       _spawnEntity();
     }
 
-    // Colisiones
+    // MOVIMIENTO LATERAL:
+    // - Si se mantiene la tecla izquierda/derecha, mover continuamente con _lateralSpeed
+    if (_laneWidth != 0 && _carWidth != 0) {
+      if (_pressingLeft && !_pressingRight) {
+        _playerX -= _lateralSpeed * dt;
+      } else if (_pressingRight && !_pressingLeft) {
+        _playerX += _lateralSpeed * dt;
+      } else {
+        // Si _autoCenter está activado, suavizar hacia target lane cuando no se presiona.
+        // Si no, no hacemos recentering: el coche se queda donde lo soltaste.
+        if (_autoCenter) {
+          final double targetX = _roadLeft + (_targetLane + 0.5) * _laneWidth - _carWidth / 2;
+          final double dx = targetX - _playerX;
+          final double t = (dt * _laneChangeSpeed).clamp(0.0, 1.0);
+          _playerX += dx * t;
+        }
+      }
+
+      // Limitar dentro de la carretera
+      _playerX = _playerX.clamp(_minPlayerX, _maxPlayerX);
+    }
+
+    // Calcular velocidad lateral para tilt
+    _lastLateralVelocity = (dt > 0) ? ((_playerX - _prevPlayerX) / dt) : 0.0;
+    _prevPlayerX = _playerX;
+
+    // Colisiones: usar el carril actual derivado de la posición X
     _checkObstacleCollisions();
     _checkPowerUpCollisions();
 
@@ -336,31 +389,39 @@ class _GamePageState extends State<GamePage> {
   void _checkObstacleCollisions() {
     if (_laneWidth == 0 || _carHeight == 0) return;
 
-    // Hitbox vertical del carro
+    // Hitbox del jugador (rectángulo)
     const double playerFactor = 0.30;
     final double playerTop = _playerY - _carHeight * playerFactor;
     final double playerBottom = _playerY + _carHeight * playerFactor;
+    final double playerLeft = _playerX;
+    final double playerRight = _playerX + _carWidth;
 
     // Recorremos de atrás hacia adelante para poder eliminar
     for (int i = _obstacles.length - 1; i >= 0; i--) {
       final o = _obstacles[i];
-      if (o.lane != playerLane) continue;
+
+      // hitbox horizontal del obstáculo (basada en su posición en el road)
+      final double obstacleLeft =
+          _roadLeft + (o.lane + 0.5) * _laneWidth - o.width / 2;
+      final double obstacleRight = obstacleLeft + o.width;
 
       final double factor = _obstacleHitboxFactor(o.assetPath);
       final double obstacleTop = o.y - o.height * factor;
       final double obstacleBottom = o.y + o.height * factor;
 
+      final bool overlapHorizontally =
+          obstacleRight > playerLeft && obstacleLeft < playerRight;
       final bool overlapVertically =
           obstacleBottom > playerTop && obstacleTop < playerBottom;
 
-      if (overlapVertically) {
+      if (overlapHorizontally && overlapVertically) {
         _obstacles.removeAt(i);
         _applyObstacleHit();
         break;
       }
     }
   }
-
+  
   /// Aplica el efecto de chocar contra un obstáculo
   void _applyObstacleHit() {
     // Cada golpe quita 1 llanta de repuesto.
@@ -375,35 +436,42 @@ class _GamePageState extends State<GamePage> {
       _onCrash();
     }
   }
-
+  
   /// Colisiones con power ups (gasolina, llantas, monedas)
   void _checkPowerUpCollisions() {
-    List<_PowerUp> toRemove = [];
+    final List<_PowerUp> toRemove = [];
 
+    // Hitbox del jugador (rectángulo)
     const double playerHitboxFactor = 0.35;
     final double playerTop = _playerY - _carHeight * playerHitboxFactor;
     final double playerBottom = _playerY + _carHeight * playerHitboxFactor;
+    final double playerLeft = _playerX;
+    final double playerRight = _playerX + _carWidth;
 
     for (final p in _powerUps) {
-      if (p.lane != playerLane) continue;
+      // hitbox horizontal del powerup
+      final double puLeft =
+          _roadLeft + (p.lane + 0.5) * _laneWidth - p.width / 2;
+      final double puRight = puLeft + p.width;
 
-      final double top = p.y - p.height * 0.35;
-      final double bottom = p.y + p.height * 0.35;
+      final double puTop = p.y - p.height * 0.35;
+      final double puBottom = p.y + p.height * 0.35;
 
-      final bool overlap = bottom > playerTop && top < playerBottom;
+      final bool overlapHorizontally =
+          puRight > playerLeft && puLeft < playerRight;
+      final bool overlapVertically =
+          puBottom > playerTop && puTop < playerBottom;
 
-      if (overlap) {
+      if (overlapHorizontally && overlapVertically) {
         if (p.type == PowerUpType.fuel) {
           _fuel += 0.35;
           if (_fuel > 1.0) _fuel = 1.0;
-        }
-        else if (p.type == PowerUpType.tire) {
+        } else if (p.type == PowerUpType.tire) {
           if (_spareTires < _maxTires) {
             _spareTires++;
           }
-        }
-        else if (p.type == PowerUpType.coin) {
-          _coinsThisRun++;               // <<--- AQUÍ SE SUMAN LAS MONEDAS
+        } else if (p.type == PowerUpType.coin) {
+          _coinsThisRun++;
         }
 
         toRemove.add(p);
@@ -412,8 +480,7 @@ class _GamePageState extends State<GamePage> {
 
     _powerUps.removeWhere((p) => toRemove.contains(p));
   }
-
-
+  
   /// Game over por choque "fuerte"
   void _onCrash() {
     _isGameOver = true;
@@ -523,17 +590,28 @@ class _GamePageState extends State<GamePage> {
   }
 
 
-  /// Mover el carro un carril a la izquierda
+  // Helper: carril actual basado en _playerX (0..laneCount-1)
+  int get _currentPlayerLane {
+    if (_laneWidth == 0) return playerLane;
+    final double centerX = _playerX + _carWidth / 2;
+    final double lanePos = ((centerX - _roadLeft) / _laneWidth);
+    int lane = lanePos.round();
+    if (lane < 0) lane = 0;
+    if (lane > laneCount -1) lane = laneCount - 1;
+    return lane;
+  }
+
+  /// Mover el carro un carril a la izquierda (ahora actualiza objetivo)
   void _moveLeft() {
     setState(() {
-      if (playerLane > 0) playerLane--;
+      if (_targetLane > 0) _targetLane--;
     });
   }
 
-  /// Mover el carro un carril a la derecha
+  /// Mover el carro un carril a la derecha (ahora actualiza objetivo)
   void _moveRight() {
     setState(() {
-      if (playerLane < laneCount - 1) playerLane++;
+      if (_targetLane < laneCount - 1) _targetLane++;
     });
   }
 
@@ -551,12 +629,17 @@ class _GamePageState extends State<GamePage> {
         onKey: (event) {
           if (event is RawKeyDownEvent) {
             final key = event.logicalKey;
-            if (key == LogicalKeyboardKey.arrowLeft ||
-                key == LogicalKeyboardKey.keyA) {
-              _moveLeft();
-            } else if (key == LogicalKeyboardKey.arrowRight ||
-                key == LogicalKeyboardKey.keyD) {
-              _moveRight();
+            if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.keyA) {
+              _pressingLeft = true;
+            } else if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.keyD) {
+              _pressingRight = true;
+            }
+          } else if (event is RawKeyUpEvent) {
+            final key = event.logicalKey;
+            if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.keyA) {
+              _pressingLeft = false;
+            } else if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.keyD) {
+              _pressingRight = false;
             }
           }
         },
@@ -577,6 +660,17 @@ class _GamePageState extends State<GamePage> {
 
             // Posición vertical del carro (abajo)
             _playerY = constraints.maxHeight * 0.8;
+
+            // Inicializar _playerX la primera vez (o después de reiniciar)
+            if (!_positionsInitialized) {
+              _playerX = _roadLeft + (playerLane + 0.5) * _laneWidth - _carWidth / 2;
+              _targetLane = playerLane;
+              _positionsInitialized = true;
+            }
+
+            // Actualizar límites para _playerX
+            _minPlayerX = _roadLeft;
+            _maxPlayerX = _roadLeft + roadWidth - _carWidth;
 
             return Stack(
               children: [
@@ -608,7 +702,7 @@ class _GamePageState extends State<GamePage> {
                     ),
                   ),
 
-                // Obstáculos
+                // Obstáculos (sprites)
                 for (final o in _obstacles)
                   Positioned(
                     left: _roadLeft + (o.lane + 0.5) * _laneWidth - o.width / 2,
@@ -621,7 +715,25 @@ class _GamePageState extends State<GamePage> {
                     ),
                   ),
 
-                // Power ups
+                // Contornos de hitbox de obstáculos (debug)
+                if (_showHitboxes)
+                  for (final o in _obstacles)
+                    Positioned(
+                      left: _roadLeft + (o.lane + 0.5) * _laneWidth - o.width / 2,
+                      top: o.y - o.height * _obstacleHitboxFactor(o.assetPath),
+                      width: o.width,
+                      height: o.height * _obstacleHitboxFactor(o.assetPath) * 2,
+                      child: IgnorePointer(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.redAccent.withOpacity(0.08),
+                            border: Border.all(color: Colors.redAccent, width: 2),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                // Power ups (sprites)
                 for (final p in _powerUps)
                   Positioned(
                     left: _roadLeft + (p.lane + 0.5) * _laneWidth - p.width / 2,
@@ -634,19 +746,69 @@ class _GamePageState extends State<GamePage> {
                     ),
                   ),
 
-                // Carro del jugador
+                // Contornos de hitbox de power ups (debug)
+                if (_showHitboxes)
+                  for (final p in _powerUps)
+                    Positioned(
+                      left: _roadLeft + (p.lane + 0.5) * _laneWidth - p.width / 2,
+                      top: p.y - p.height * 0.35,
+                      width: p.width,
+                      height: p.height * 0.35 * 2,
+                      child: IgnorePointer(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.greenAccent.withOpacity(0.08),
+                            border: Border.all(color: Colors.greenAccent, width: 2),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                // Carro del jugador (usar _playerX para movimiento suave)
                 Positioned(
-                  left: _roadLeft +
-                      (playerLane + 0.5) * _laneWidth -
-                      _carWidth / 2,
+                  left: _playerX,
                   top: _playerY - _carHeight / 2,
                   width: _carWidth,
                   height: _carHeight,
-                  child: Image.asset(
-                    widget.carAsset,
-                    fit: BoxFit.contain,
+                  child: Builder(
+                    builder: (_) {
+                      // tilt proporcional a la velocidad lateral (normalizada por _lateralSpeed)
+                      final double norm = (_lateralSpeed == 0) ? 0.0 : (_lastLateralVelocity / _lateralSpeed);
+                      double angle = (norm * _maxTilt).clamp(-_maxTilt, _maxTilt);
+                      // opcional: añadir un pequeño tilt según el offset con respecto al centro del carril
+                      final double centerOfCurrentLane = _roadLeft + (_currentPlayerLane + 0.5) * _laneWidth;
+                      final double offset = ((_playerX + _carWidth / 2) - centerOfCurrentLane) / _laneWidth;
+                      angle += (offset * _maxTilt * 0.25);
+                      angle = angle.clamp(-_maxTilt, _maxTilt);
+
+                      return Transform.rotate(
+                        angle: angle,
+                        alignment: Alignment.center,
+                        child: Image.asset(
+                          widget.carAsset,
+                          fit: BoxFit.contain,
+                        ),
+                      );
+                    },
                   ),
                 ),
+
+                // Contorno de hitbox del jugador (debug)
+                if (_showHitboxes)
+                  Positioned(
+                    left: _playerX,
+                    top: _playerY - _carHeight * 0.30,
+                    width: _carWidth,
+                    height: _carHeight * 0.30 * 2,
+                    child: IgnorePointer(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.blueAccent.withOpacity(0.06),
+                          border: Border.all(color: Colors.blueAccent, width: 2),
+                        ),
+                      ),
+                    ),
+                  ),
 
                 // HUD gasolina
                 Positioned(
