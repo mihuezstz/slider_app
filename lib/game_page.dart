@@ -548,17 +548,17 @@ class _GamePageState extends State<GamePage> {
         title: const Text('Juego'),
         backgroundColor: Colors.grey.shade800,
       ),
-      body:Stack(
-        children: [
-          Positioned.fill(
-            child: Image.asset(
-              widget.escenario,
-              repeat: ImageRepeat.repeatY,
-              fit: BoxFit.none,
-              scale: 2,
-            ),
+      body: Container(
+        decoration: BoxDecoration(
+          image: DecorationImage(image: AssetImage(widget.escenario),
+          fit: BoxFit.cover,
+          scale: 2.0,
+          alignment: Alignment.center,
           ),
-    
+        ),
+        child: Stack(
+        children: [
+        
        RawKeyboardListener(
         focusNode: _focusNode,
         autofocus: true,
@@ -579,7 +579,9 @@ class _GamePageState extends State<GamePage> {
        ),
       ],
     ),
-  );
+  ),
+);
+
 }
 Widget _buildGameContent() {
         return LayoutBuilder(
@@ -587,7 +589,7 @@ Widget _buildGameContent() {
             _screenHeight = constraints.maxHeight;
 
             // Carretera ocupa 70% del ancho
-            final roadWidth = constraints.maxWidth * 0.7;
+            final roadWidth = constraints.maxWidth * 0.6;
             _laneWidth = roadWidth / laneCount;
 
             // Tamaño del carro
@@ -601,19 +603,7 @@ Widget _buildGameContent() {
             _playerY = constraints.maxHeight * 0.8;
 
             return Stack(
-              children: [
-                // Fondo  (muestra escenario)
-                Positioned.fill(
-                  child: FittedBox(
-                    fit: BoxFit.none,
-                  child: Image.asset(
-                    widget.escenario,
-                    repeat: ImageRepeat.repeatY,
-                    width: MediaQuery.of(context).size.width,
-                    fit: BoxFit.fitWidth,
-                  ),
-                ),
-              ),
+              children: [  
                 // Carretera
                 Align(
                   alignment: Alignment.center,
@@ -621,8 +611,11 @@ Widget _buildGameContent() {
                     width: roadWidth,
                     height: constraints.maxHeight,
                     decoration: BoxDecoration(
-                      color: Colors.grey.shade800,
-                      border: Border.all(color: Colors.white30, width: 2),
+                      color: const Color(0xFF3A3A3A),
+                      border: Border(
+                        left: BorderSide(color: Colors.white, width: 3),
+                        right: BorderSide(color: Colors.white, width: 3),
+                      ),
                     ),
                   ),
                 ),
@@ -635,7 +628,7 @@ Widget _buildGameContent() {
                     bottom: 0,
                     child: Container(
                       width: 4,
-                      color: Colors.white24,
+                      color: Colors.white70,
                     ),
                   ),
 
