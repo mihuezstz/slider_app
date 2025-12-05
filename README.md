@@ -1,9 +1,9 @@
 # slider_app
 
-Integrantes del equipo
-García Rodríguez Daniela
-Encinas Tapia Rodrigo
-Huez Santacruz Michelle
+# integrantes del equipo
+García Rodríguez Daniela, 
+Encinas Tapia Rodrigo, 
+Huez Santacruz Michelle, 
 Rene
 
 ## 🔧 Configuración de Variables de Entorno
