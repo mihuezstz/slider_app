@@ -1,6 +1,10 @@
 # slider_app
 
-A Flutter application with Supabase integration for player score tracking.
+# integrantes del equipo
+García Rodríguez Daniela, 
+Encinas Tapia Rodrigo, 
+Huez Santacruz Michelle, 
+Rene
 
 ## 🔧 Configuración de Variables de Entorno
 

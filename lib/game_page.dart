@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'main.dart';
 
 /// Pantalla principal de juego.2
 /// Recibe el asset del carro que eligió la persona usuaria.
@@ -15,11 +16,15 @@ class GamePage extends StatefulWidget {
   // Callback para reportar cuántas monedas se ganaron en la corrida.
   final ValueChanged<int>? onCoinsEarned;
 
+  //Escenario seleccionado
+  final String escenario;
+
   const GamePage({
     super.key,
     required this.carAsset,
     this.startingCoins = 0,
     this.onCoinsEarned,
+    required this.escenario,
   });
 
   @override
@@ -66,11 +71,19 @@ class _PowerUp {
 }
 
 class _GamePageState extends State<GamePage> {
+
   void _finishRunAndExit() {
     _gameLoopTimer?.cancel();             // detener loop
     widget.onCoinsEarned?.call(_coinsThisRun); // avisar cuántas monedas se ganaron
-    Navigator.pop(context);               // regresar a la pantalla principal
+    Navigator.pop(context, _coinsThisRun);               // regresar a la pantalla principal
+
   }
+
+  // Tiempo total sobrevivido en la partida (segundos)
+  double _survivalTime = 0.0;
+
+  // Cuántas monedas ya se han dado por tiempo (para no repetir)
+  int _coinsFromTime = 0;
 
   // Carriles
   static const int laneCount = 3;
@@ -158,31 +171,55 @@ class _GamePageState extends State<GamePage> {
 
   /// Inicia / reinicia el loop del juego
   void _startLoop() {
+    // Detenemos cualquier loop anterior
     _gameLoopTimer?.cancel();
+
+    // Reset de estado básico
     _isGameOver = false;
     _obstacles.clear();
     _powerUps.clear();
     _spawnTimer = 0.0;
 
+    // Recursos del jugador
     _fuel = 1.0;
     _spareTires = _maxTires;
 
-    _coinsThisRun = 0;   // reinicia monedas de la corrida
+    // Monedas y tiempo de ESTA partida
+    _coinsThisRun = 0;     // monedas de la corrida actual
+    _survivalTime = 0.0;   // tiempo que llevamos vivos
+    _coinsFromTime = 0;    // cuántas monedas ya dimos por tiempo
 
-    // Reiniciar objetivo de carril
+    // Posición del carro
     playerLane = 1;
     _targetLane = 1;
-    _positionsInitialized = false; // para re-inicializar _playerX en el next layout
+    _positionsInitialized = false; // para re-inicializar _playerX en el próximo layout
 
+    // Iniciar loop del juego (60 fps aprox)
     _gameLoopTimer = Timer.periodic(
       const Duration(milliseconds: 16),
           (timer) => _updateGame(0.016),
     );
   }
 
+
   /// Actualiza el estado del juego cada frame
   void _updateGame(double dt) {
     if (_isGameOver || _screenHeight == 0) return;
+
+    // 🔹 1) Aumentar tiempo sobrevivido
+    _survivalTime += dt;
+
+// 🔹 2) Calcular cuántas monedas tocan por tiempo (1 moneda cada 10s)
+    final int newCoinsFromTime = (_survivalTime ~/ 10); // división entera
+
+// Si cruzamos un nuevo bloque de 10 segundos → dar monedas nuevas
+    if (newCoinsFromTime > _coinsFromTime) {
+      final diff = newCoinsFromTime - _coinsFromTime;
+      _coinsFromTime = newCoinsFromTime;
+
+      _coinsThisRun += diff;   // sumamos esas monedas a las monedas de la partida
+    }
+
 
     // Consumir gasolina
     _fuel -= _fuelConsumptionPerSecond * dt;
@@ -497,7 +534,7 @@ class _GamePageState extends State<GamePage> {
             TextButton(
               onPressed: () {
                 // Cerrar dialogo, reiniciar estado y volver a empezar
-                Navigator.pop(context);
+                Navigator.pop(context, _coinsThisRun);
                 setState(() => playerLane = 1);
                 _startLoop();
               },
@@ -506,7 +543,7 @@ class _GamePageState extends State<GamePage> {
             TextButton(
               onPressed: () {
                 // Cerrar dialogo y terminar la partida
-                Navigator.pop(context);
+                Navigator.pop(context, _coinsThisRun);
                 _finishRunAndExit();
               },
               child: const Text('Salir'),
@@ -623,7 +660,18 @@ class _GamePageState extends State<GamePage> {
         title: const Text('Juego'),
         backgroundColor: Colors.grey.shade800,
       ),
-      body: RawKeyboardListener(
+      body: Container(
+        decoration: BoxDecoration(
+          image: DecorationImage(image: AssetImage(widget.escenario),
+          fit: BoxFit.cover,
+          scale: 2.0,
+          alignment: Alignment.center,
+          ),
+        ),
+        child: Stack(
+        children: [
+        
+       RawKeyboardListener(
         focusNode: _focusNode,
         autofocus: true,
         onKey: (event) {
@@ -643,12 +691,22 @@ class _GamePageState extends State<GamePage> {
             }
           }
         },
-        child: LayoutBuilder(
+        // Funcion con el contenido del juego
+        child: _buildGameContent(),
+       ),
+      ],
+    ),
+  ),
+);
+
+}
+Widget _buildGameContent() {
+        return LayoutBuilder(
           builder: (context, constraints) {
             _screenHeight = constraints.maxHeight;
 
             // Carretera ocupa 70% del ancho
-            final roadWidth = constraints.maxWidth * 0.7;
+            final roadWidth = constraints.maxWidth * 0.6;
             _laneWidth = roadWidth / laneCount;
 
             // Tamaño del carro
@@ -673,10 +731,7 @@ class _GamePageState extends State<GamePage> {
             _maxPlayerX = _roadLeft + roadWidth - _carWidth;
 
             return Stack(
-              children: [
-                // Fondo
-                Container(color: Colors.grey.shade900),
-
+              children: [  
                 // Carretera
                 Align(
                   alignment: Alignment.center,
@@ -684,8 +739,11 @@ class _GamePageState extends State<GamePage> {
                     width: roadWidth,
                     height: constraints.maxHeight,
                     decoration: BoxDecoration(
-                      color: Colors.grey.shade800,
-                      border: Border.all(color: Colors.white30, width: 2),
+                      color: const Color(0xFF3A3A3A),
+                      border: Border(
+                        left: BorderSide(color: Colors.white, width: 3),
+                        right: BorderSide(color: Colors.white, width: 3),
+                      ),
                     ),
                   ),
                 ),
@@ -698,7 +756,7 @@ class _GamePageState extends State<GamePage> {
                     bottom: 0,
                     child: Container(
                       width: 4,
-                      color: Colors.white24,
+                      color: Colors.white70,
                     ),
                   ),
 
@@ -716,22 +774,22 @@ class _GamePageState extends State<GamePage> {
                   ),
 
                 // Contornos de hitbox de obstáculos (debug)
-                if (_showHitboxes)
-                  for (final o in _obstacles)
-                    Positioned(
-                      left: _roadLeft + (o.lane + 0.5) * _laneWidth - o.width / 2,
-                      top: o.y - o.height * _obstacleHitboxFactor(o.assetPath),
-                      width: o.width,
-                      height: o.height * _obstacleHitboxFactor(o.assetPath) * 2,
-                      child: IgnorePointer(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.redAccent.withOpacity(0.08),
-                            border: Border.all(color: Colors.redAccent, width: 2),
-                          ),
-                        ),
-                      ),
-                    ),
+                //if (_showHitboxes)
+                  //for (final o in _obstacles)
+                    //Positioned(
+                      //left: _roadLeft + (o.lane + 0.5) * _laneWidth - o.width / 2,
+                      //top: o.y - o.height * _obstacleHitboxFactor(o.assetPath),
+                      //width: o.width,
+                      //height: o.height * _obstacleHitboxFactor(o.assetPath) * 2,
+                      //child: IgnorePointer(
+                        //child: Container(
+                          //decoration: BoxDecoration(
+                            //color: Colors.redAccent.withOpacity(0.08),
+                            //border: Border.all(color: Colors.redAccent, width: 2),
+                          //),
+                        //),
+                     // ),
+                    //),
 
                 // Power ups (sprites)
                 for (final p in _powerUps)
@@ -747,22 +805,22 @@ class _GamePageState extends State<GamePage> {
                   ),
 
                 // Contornos de hitbox de power ups (debug)
-                if (_showHitboxes)
-                  for (final p in _powerUps)
-                    Positioned(
-                      left: _roadLeft + (p.lane + 0.5) * _laneWidth - p.width / 2,
-                      top: p.y - p.height * 0.35,
-                      width: p.width,
-                      height: p.height * 0.35 * 2,
-                      child: IgnorePointer(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.greenAccent.withOpacity(0.08),
-                            border: Border.all(color: Colors.greenAccent, width: 2),
-                          ),
-                        ),
-                      ),
-                    ),
+                //if (_showHitboxes)
+                  //for (final p in _powerUps)
+                    //Positioned(
+                      //left: _roadLeft + (p.lane + 0.5) * _laneWidth - p.width / 2,
+                      //top: p.y - p.height * 0.35,
+                      //width: p.width,
+                      //height: p.height * 0.35 * 2,
+                      //child: IgnorePointer(
+                        //child: Container(
+                          //decoration: BoxDecoration(
+                            //color: Colors.greenAccent.withOpacity(0.08),
+                            //border: Border.all(color: Colors.greenAccent, width: 2),
+                          //),
+                        //),
+                      //),
+                   // ),
 
                 // Carro del jugador (usar _playerX para movimiento suave)
                 Positioned(
@@ -794,21 +852,21 @@ class _GamePageState extends State<GamePage> {
                 ),
 
                 // Contorno de hitbox del jugador (debug)
-                if (_showHitboxes)
-                  Positioned(
-                    left: _playerX,
-                    top: _playerY - _carHeight * 0.30,
-                    width: _carWidth,
-                    height: _carHeight * 0.30 * 2,
-                    child: IgnorePointer(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.blueAccent.withOpacity(0.06),
-                          border: Border.all(color: Colors.blueAccent, width: 2),
-                        ),
-                      ),
-                    ),
-                  ),
+                //if (_showHitboxes)
+                  //Positioned(
+                    //left: _playerX,
+                    //top: _playerY - _carHeight * 0.30,
+                    //width: _carWidth,
+                    //height: _carHeight * 0.30 * 2,
+                    //child: IgnorePointer(
+                      //child: Container(
+                        //decoration: BoxDecoration(
+                          //color: Colors.blueAccent.withOpacity(0.06),
+                          //border: Border.all(color: Colors.blueAccent, width: 2),
+                        //),
+                      //),
+                    //),
+                  //),
 
                 // HUD gasolina
                 Positioned(
@@ -933,8 +991,6 @@ class _GamePageState extends State<GamePage> {
               ],
             );
           },
-        ),
-      ),
-    );
+        );
   }
 }
