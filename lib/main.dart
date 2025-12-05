@@ -9,25 +9,51 @@ import 'package:slider_app/widgets/escenarios_page.dart';
 import 'services/supabase_service.dart';
 import 'widgets/draggable_car.dart';
 import 'game_page.dart';
-
+import 'package:slider_app/widgets/shop_page.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-
-/// Lista de carros disponibles
+/// Lista de carros disponibles (EN EL MISMO ORDEN QUE EN LA TIENDA)
 const List<String> kCarAssets = [
   'assets/cars/bochito_car.png',
   'assets/cars/chevyblue_car.png',
   'assets/cars/tsuru_car.png',
   'assets/cars/police_car.png',
+  'assets/cars/deportivo_car.png',
+  'assets/cars/espacial_car.png',
+  'assets/cars/hotdog_car.png',
+  'assets/cars/motoPizza_car.png',
+  'assets/cars/motoRobot_car.png',
+  'assets/cars/norteño_car.png',
 ];
 
-/// Nombres visibles de los carros
+/// Nombres visibles de los carros (MISMO ORDEN)
 const List<String> kCarNames = [
   'Bochito',
   'Chevy azul',
   'Tsuru',
   'Patrulla eléctrica',
+  'Deportivo',
+  'Carro espacial',
+  'Hot dog móvil',
+  'Moto pizza',
+  'Moto robot',
+  'Norteño',
 ];
+
+/// Precios en créditos de cada carro
+const List<int> kCarPrices = [
+  0,   // Bochito: gratis
+  20,
+  30,
+  40,
+  50,
+  60,
+  70,
+  80,
+  90,
+  100,
+];
+
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -179,6 +205,9 @@ class _MyHomePageState extends State<MyHomePage> {
   final TextEditingController _nameController = TextEditingController();
   String _playerName = '';
 
+  Set<int> _ownedCarIndices = {0}; // Bochito siempre desbloqueado
+  bool _isCarOwned(int index) => _ownedCarIndices.contains(index);
+
   // Carro seleccionado
   int _selectedCarIndex = 0;
 
@@ -200,6 +229,16 @@ class _MyHomePageState extends State<MyHomePage> {
   //---------------------StartGame-----------------------
 
   void _startGame() async {
+    // 🔹 Si el carro seleccionado NO está comprado, no dejamos jugar
+    if (!_ownedCarIndices.contains(_selectedCarIndex)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Este carro está bloqueado. Cómpralo primero en la tienda.'),
+        ),
+      );
+      return;
+    }
+
     if (_playerName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -351,16 +390,47 @@ class _MyHomePageState extends State<MyHomePage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
-        actions: [],
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.shopping_cart_outlined),
+            tooltip: 'Tienda de carritos',
+            onPressed: () async {
+              // Abrir la tienda y esperar el resultado
+              final result = await Navigator.push<ShopResult>(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => ShopPage(
+                    carAssets: kCarAssets,
+                    carNames: kCarNames,
+                    carPrices: kCarPrices,
+                    credits: _credits,
+                    ownedCarIndices: _ownedCarIndices,
+                  ),
+                ),
+              );
+
+              // Si la tienda regresa algo, actualizamos créditos y carritos comprados
+              if (result != null) {
+                setState(() {
+                  _credits = result.newCredits;
+                  _ownedCarIndices = result.ownedCarIndices;
+                });
+
+                // Guardar créditos actualizados en Supabase
+                await _saveCreditsToSupabase();
+              }
+            },
+          ),
+        ],
       ),
       body: AnimatedBackground(
         child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: _buildVerticalLayout(),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: _buildVerticalLayout(),
+          ),
         ),
       ),
-    ), 
     );
   }
 
