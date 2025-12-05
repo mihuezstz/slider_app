@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:just_audio/just_audio.dart';
+
 
 /// Pantalla principal de juego.2
 /// Recibe el asset del carro que eligió la persona usuaria.
@@ -12,11 +14,11 @@ class GamePage extends StatefulWidget {
   // Monedas con las que empieza la partida (las que ya tiene el jugador).
   final int startingCoins;
 
+  final String escenario;
+
+
   // Callback para reportar cuántas monedas se ganaron en la corrida.
   final ValueChanged<int>? onCoinsEarned;
-
-  //Escenario seleccionado
-  final String escenario;
 
   const GamePage({
     super.key,
@@ -26,8 +28,17 @@ class GamePage extends StatefulWidget {
     required this.escenario,
   });
 
+   @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Text('Escenario: $escenario'),
+    );
+  }
+
+
   @override
   State<GamePage> createState() => _GamePageState();
+ 
 }
 
 /// Obstáculo (bache, aceite, cono, carro enemigo)
@@ -67,21 +78,43 @@ class _PowerUp {
     required this.width,
     required this.height,
   });
+  
 }
 
 class _GamePageState extends State<GamePage> {
-
+  late AudioPlayer _coinSound;
+  late AudioPlayer _bgMusic;
+  late AudioPlayer _carAccelSound;
+  late AudioPlayer _fuelSound;
   void _finishRunAndExit() {
+    _bgMusic.stop();
     _gameLoopTimer?.cancel();             // detener loop
     widget.onCoinsEarned?.call(_coinsThisRun); // avisar cuántas monedas se ganaron
     Navigator.pop(context);               // regresar a la pantalla principal
   }
+  void _toggleMute() {
+  setState(() {
+    _isMuted = !_isMuted;
+  });
+
+  if (_isMuted) {
+    _bgMusic.setVolume(0);
+  } else {
+    _bgMusic.setVolume(1);
+  }
+}
 
   // Carriles
   static const int laneCount = 3;
 
   // Estado del jugador
   int playerLane = 1;
+
+  // Nueva: carril objetivo y posición X actual para animar movimiento suave
+  int _targetLane = 1;
+  double _playerX = 0.0; // left en px del carro (se interpola hacia target)
+  final double _laneChangeSpeed = 200.0; // mayor = más rápido (ajusta a gusto)
+  bool _positionsInitialized = false;
 
   // Listas de entidades
   final List<_Obstacle> _obstacles = [];
@@ -92,7 +125,7 @@ class _GamePageState extends State<GamePage> {
   Timer? _gameLoopTimer;
   double _spawnTimer = 0.0;
   double _spawnInterval = 1.8; // más grande = más separados
-  double _scrollSpeed = 260;   // velocidad de caída
+  double _scrollSpeed = 500;   // velocidad de caída
 
   // Para cálculo de posiciones y colisiones
   double _screenHeight = 0;
@@ -103,6 +136,8 @@ class _GamePageState extends State<GamePage> {
   double _playerY = 0;
 
   bool _isGameOver = false;
+  bool _isMuted = false;
+  
 
   // Gasolina (0.0 a 1.0)
   double _fuel = 1.0;
@@ -119,20 +154,129 @@ class _GamePageState extends State<GamePage> {
   // Teclado
   final FocusNode _focusNode = FocusNode();
 
-  @override
-  void initState() {
-    super.initState();
-    _startLoop();
-    // Para que el RawKeyboardListener reciba las teclas
-    _focusNode.requestFocus();
-  }
+  // Nueva: flags para teclas presionadas (izquierda/derecha)
+  bool _pressingLeft = false;
+  bool _pressingRight = false;
+  final double _lateralSpeed = 500.0; // velocidad de movimiento lateral
 
-  @override
-  void dispose() {
-    _gameLoopTimer?.cancel();
-    _focusNode.dispose();
-    super.dispose();
+  //variables para tilt cuando se desplaza IZQ/DER
+  double _prevPlayerX = 0.0;
+  double _lastLateralVelocity = 0.0; // px/s
+  final double _maxTilt = 0.3; // radianes
+
+  // Debug: mostrar contornos de hitbox
+  bool _showHitboxes = true;
+
+  // Control: si true el coche se recentra (interpolación) cuando no se está moviendo.
+  // Si false, al soltar la tecla el coche se queda en la posición X actual.
+  bool _autoCenter = false;
+
+  // Nueva: límites para la posición X del jugador
+  double _minPlayerX = 0;
+  double _maxPlayerX = 0;
+
+@override
+void initState() {
+  super.initState();
+
+  _bgMusic = AudioPlayer();
+  _coinSound = AudioPlayer();
+  _carAccelSound = AudioPlayer();
+  _fuelSound = AudioPlayer();
+
+  _playBackgroundMusic();
+  _playCoinSound();
+  _loadCarAccelSound();
+  _playFuelSound();
+
+  _startLoop();
+  // Para que el RawKeyboardListener reciba las teclas
+  _focusNode.requestFocus();
+}
+
+Future<void> _playBackgroundMusic() async {
+  try {
+    await _bgMusic.setAsset('assets/audio/bg_music.mp3');
+    await _bgMusic.setLoopMode(LoopMode.all); // repetir infinitamente
+    await _bgMusic.play();
+  } catch (e) {
+    print("Error cargando música: $e");
   }
+}
+
+Future<void> _playCoinSound() async {
+  final p = AudioPlayer();
+  try {
+    await p.setAudioSource(AudioSource.asset('assets/audio/coin.wav'));
+    p.setVolume(1.0);
+    await p.play();
+  } catch (e) {
+    print("Error en sonido de moneda: $e");
+  } finally {
+    p.dispose();
+  }
+}
+Future<void> _loadCarAccelSound() async {
+  try {
+    await _carAccelSound.setAsset('assets/audio/car_accel.wav');
+    _carAccelSound.setLoopMode(LoopMode.all); // 🔁 Motor continuo
+    _carAccelSound.setVolume(1); // Ajusta aquí si quieres más volumen
+  } catch (e) {
+    print("Error cargando sonido del motor: $e");
+  }
+}
+Future<void> _playFuelSound() async {
+  final p = AudioPlayer();
+  try {
+    await p.setAudioSource(AudioSource.asset('assets/audio/fuel.mp3'));
+    p.setVolume(1.0);
+    await p.play();
+  } catch (e) {
+    print("Error en sonido de gasolina: $e");
+  } finally {
+    p.dispose();
+  }
+}
+Future<void> _playCrashSound() async {
+  final p = AudioPlayer();
+  try {
+    await p.setAudioSource(
+      AudioSource.asset('assets/audio/crash.mp3'),
+    );
+    p.setVolume(1.0);      // ajusta volumen si lo deseas
+    await p.play();
+  } catch (e) {
+    print("Error en sonido de choque: $e");
+  } finally {
+    p.dispose();
+  }
+}
+Future<void> _playTireSound() async {
+  final p = AudioPlayer();
+  try {
+    await p.setAudioSource(
+      AudioSource.asset('assets/audio/tire.mp3'),
+    );
+    p.setVolume(1.0);
+    await p.play();
+  } catch (e) {
+    print("Error en sonido de neumático: $e");
+  } finally {
+    p.dispose();
+  }
+}
+
+
+@override
+void dispose() {
+  _bgMusic.dispose();
+  _coinSound.dispose();
+  _carAccelSound.dispose(); // ⬅️ NUEVO
+  _gameLoopTimer?.cancel();
+  _focusNode.dispose();
+  _fuelSound.dispose();
+  super.dispose();
+}
 
   /// Inicia / reinicia el loop del juego
   void _startLoop() {
@@ -144,11 +288,13 @@ class _GamePageState extends State<GamePage> {
 
     _fuel = 1.0;
     _spareTires = _maxTires;
-    // No reinicio monedas para que sientas progreso en las pruebas
-    // Si quieres que se reinicien: comenta la siguiente línea.
 
     _coinsThisRun = 0;   // reinicia monedas de la corrida
 
+    // Reiniciar objetivo de carril
+    playerLane = 1;
+    _targetLane = 1;
+    _positionsInitialized = false; // para re-inicializar _playerX en el next layout
 
     _gameLoopTimer = Timer.periodic(
       const Duration(milliseconds: 16),
@@ -189,7 +335,33 @@ class _GamePageState extends State<GamePage> {
       _spawnEntity();
     }
 
-    // Colisiones
+    // MOVIMIENTO LATERAL:
+    // - Si se mantiene la tecla izquierda/derecha, mover continuamente con _lateralSpeed
+    if (_laneWidth != 0 && _carWidth != 0) {
+      if (_pressingLeft && !_pressingRight) {
+        _playerX -= _lateralSpeed * dt;
+      } else if (_pressingRight && !_pressingLeft) {
+        _playerX += _lateralSpeed * dt;
+      } else {
+        // Si _autoCenter está activado, suavizar hacia target lane cuando no se presiona.
+        // Si no, no hacemos recentering: el coche se queda donde lo soltaste.
+        if (_autoCenter) {
+          final double targetX = _roadLeft + (_targetLane + 0.5) * _laneWidth - _carWidth / 2;
+          final double dx = targetX - _playerX;
+          final double t = (dt * _laneChangeSpeed).clamp(0.0, 1.0);
+          _playerX += dx * t;
+        }
+      }
+
+      // Limitar dentro de la carretera
+      _playerX = _playerX.clamp(_minPlayerX, _maxPlayerX);
+    }
+
+    // Calcular velocidad lateral para tilt
+    _lastLateralVelocity = (dt > 0) ? ((_playerX - _prevPlayerX) / dt) : 0.0;
+    _prevPlayerX = _playerX;
+
+    // Colisiones: usar el carril actual derivado de la posición X
     _checkObstacleCollisions();
     _checkPowerUpCollisions();
 
@@ -339,38 +511,48 @@ class _GamePageState extends State<GamePage> {
   void _checkObstacleCollisions() {
     if (_laneWidth == 0 || _carHeight == 0) return;
 
-    // Hitbox vertical del carro
+    // Hitbox del jugador (rectángulo)
     const double playerFactor = 0.30;
     final double playerTop = _playerY - _carHeight * playerFactor;
     final double playerBottom = _playerY + _carHeight * playerFactor;
+    final double playerLeft = _playerX;
+    final double playerRight = _playerX + _carWidth;
 
     // Recorremos de atrás hacia adelante para poder eliminar
     for (int i = _obstacles.length - 1; i >= 0; i--) {
       final o = _obstacles[i];
-      if (o.lane != playerLane) continue;
+
+      // hitbox horizontal del obstáculo (basada en su posición en el road)
+      final double obstacleLeft =
+          _roadLeft + (o.lane + 0.5) * _laneWidth - o.width / 2;
+      final double obstacleRight = obstacleLeft + o.width;
 
       final double factor = _obstacleHitboxFactor(o.assetPath);
       final double obstacleTop = o.y - o.height * factor;
       final double obstacleBottom = o.y + o.height * factor;
 
+      final bool overlapHorizontally =
+          obstacleRight > playerLeft && obstacleLeft < playerRight;
       final bool overlapVertically =
           obstacleBottom > playerTop && obstacleTop < playerBottom;
 
-      if (overlapVertically) {
+      if (overlapHorizontally && overlapVertically) {
         _obstacles.removeAt(i);
         _applyObstacleHit();
         break;
       }
     }
   }
-
+  
   /// Aplica el efecto de chocar contra un obstáculo
   void _applyObstacleHit() {
     // Cada golpe quita 1 llanta de repuesto.
     if (_spareTires > 0) {
       _spareTires -= 1;
+      _playCrashSound();
       if (_spareTires <= 0) {
         _spareTires = 0;
+        _playCrashSound();
         _onNoTires();
       }
     } else {
@@ -378,36 +560,48 @@ class _GamePageState extends State<GamePage> {
       _onCrash();
     }
   }
-
+  
   /// Colisiones con power ups (gasolina, llantas, monedas)
   void _checkPowerUpCollisions() {
-    List<_PowerUp> toRemove = [];
+    final List<_PowerUp> toRemove = [];
 
+    // Hitbox del jugador (rectángulo)
     const double playerHitboxFactor = 0.35;
     final double playerTop = _playerY - _carHeight * playerHitboxFactor;
     final double playerBottom = _playerY + _carHeight * playerHitboxFactor;
+    final double playerLeft = _playerX;
+    final double playerRight = _playerX + _carWidth;
 
     for (final p in _powerUps) {
-      if (p.lane != playerLane) continue;
+      // hitbox horizontal del powerup
+      final double puLeft =
+          _roadLeft + (p.lane + 0.5) * _laneWidth - p.width / 2;
+      final double puRight = puLeft + p.width;
 
-      final double top = p.y - p.height * 0.35;
-      final double bottom = p.y + p.height * 0.35;
+      final double puTop = p.y - p.height * 0.35;
+      final double puBottom = p.y + p.height * 0.35;
 
-      final bool overlap = bottom > playerTop && top < playerBottom;
+      final bool overlapHorizontally =
+          puRight > playerLeft && puLeft < playerRight;
+      final bool overlapVertically =
+          puBottom > playerTop && puTop < playerBottom;
 
-      if (overlap) {
+      if (overlapHorizontally && overlapVertically) {
         if (p.type == PowerUpType.fuel) {
           _fuel += 0.35;
+            _playFuelSound();
           if (_fuel > 1.0) _fuel = 1.0;
-        }
-        else if (p.type == PowerUpType.tire) {
+        } else if (p.type == PowerUpType.tire) {
           if (_spareTires < _maxTires) {
             _spareTires++;
+            _playTireSound();
           }
-        }
-        else if (p.type == PowerUpType.coin) {
-          _coinsThisRun++;               // <<--- AQUÍ SE SUMAN LAS MONEDAS
-        }
+       } else if (p.type == PowerUpType.coin) {
+  _coinsThisRun++;
+
+  // 🔊 Reproducir sonido de moneda
+       _playCoinSound(); 
+}
 
         toRemove.add(p);
       }
@@ -415,8 +609,7 @@ class _GamePageState extends State<GamePage> {
 
     _powerUps.removeWhere((p) => toRemove.contains(p));
   }
-
-
+  
   /// Game over por choque "fuerte"
   void _onCrash() {
     _isGameOver = true;
@@ -526,17 +719,28 @@ class _GamePageState extends State<GamePage> {
   }
 
 
-  /// Mover el carro un carril a la izquierda
+  // Helper: carril actual basado en _playerX (0..laneCount-1)
+  int get _currentPlayerLane {
+    if (_laneWidth == 0) return playerLane;
+    final double centerX = _playerX + _carWidth / 2;
+    final double lanePos = ((centerX - _roadLeft) / _laneWidth);
+    int lane = lanePos.round();
+    if (lane < 0) lane = 0;
+    if (lane > laneCount -1) lane = laneCount - 1;
+    return lane;
+  }
+
+  /// Mover el carro un carril a la izquierda (ahora actualiza objetivo)
   void _moveLeft() {
     setState(() {
-      if (playerLane > 0) playerLane--;
+      if (_targetLane > 0) _targetLane--;
     });
   }
 
-  /// Mover el carro un carril a la derecha
+  /// Mover el carro un carril a la derecha (ahora actualiza objetivo)
   void _moveRight() {
     setState(() {
-      if (playerLane < laneCount - 1) playerLane++;
+      if (_targetLane < laneCount - 1) _targetLane++;
     });
   }
 
@@ -544,52 +748,68 @@ class _GamePageState extends State<GamePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey.shade900,
+      
       appBar: AppBar(
         title: const Text('Juego'),
         backgroundColor: Colors.grey.shade800,
-      ),
-      body: Container(
-        decoration: BoxDecoration(
-          image: DecorationImage(image: AssetImage(widget.escenario),
-          fit: BoxFit.cover,
-          scale: 2.0,
-          alignment: Alignment.center,
+  automaticallyImplyLeading: false,
+        actions: [
+          IconButton(
+            icon: Icon(
+              _isMuted ? Icons.volume_off : Icons.volume_up,
+              color: Colors.white,
+            ),
+            onPressed: _toggleMute,
           ),
-        ),
-        child: Stack(
-        children: [
-        
-       RawKeyboardListener(
+        ],
+      ),
+      
+      body: RawKeyboardListener(
         focusNode: _focusNode,
         autofocus: true,
-        onKey: (event) {
-          if (event is RawKeyDownEvent) {
-            final key = event.logicalKey;
-            if (key == LogicalKeyboardKey.arrowLeft ||
-                key == LogicalKeyboardKey.keyA) {
-              _moveLeft();
-            } else if (key == LogicalKeyboardKey.arrowRight ||
-                key == LogicalKeyboardKey.keyD) {
-              _moveRight();
-            }
-          }
-        },
-        // Funcion con el contenido del juego
-        child: _buildGameContent(),
-       ),
-      ],
-    ),
-  ),
-);
+       onKey: (event) {
+  if (event is RawKeyDownEvent) {
+    final key = event.logicalKey;
 
-}
-Widget _buildGameContent() {
-        return LayoutBuilder(
+    if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.keyA) {
+      if (!_pressingLeft && !_carAccelSound.playing) {
+        _carAccelSound.play(); // 🔊 encender motor
+      }
+      _pressingLeft = true;
+    }
+
+    if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.keyD) {
+      if (!_pressingRight && !_carAccelSound.playing) {
+        _carAccelSound.play(); // 🔊 encender motor
+      }
+      _pressingRight = true;
+    }
+
+  } else if (event is RawKeyUpEvent) {
+    final key = event.logicalKey;
+
+    if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.keyA) {
+      _pressingLeft = false;
+    }
+
+    if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.keyD) {
+      _pressingRight = false;
+    }
+
+    // 🚗 Si no se está presionando nada, apagar motor
+    if (!_pressingLeft && !_pressingRight) {
+      _carAccelSound.pause();
+      _carAccelSound.seek(Duration.zero); // Reiniciar motor
+    }
+  }
+},
+
+        child: LayoutBuilder(
           builder: (context, constraints) {
             _screenHeight = constraints.maxHeight;
 
             // Carretera ocupa 70% del ancho
-            final roadWidth = constraints.maxWidth * 0.6;
+            final roadWidth = constraints.maxWidth * 0.7;
             _laneWidth = roadWidth / laneCount;
 
             // Tamaño del carro
@@ -602,8 +822,23 @@ Widget _buildGameContent() {
             // Posición vertical del carro (abajo)
             _playerY = constraints.maxHeight * 0.8;
 
+            // Inicializar _playerX la primera vez (o después de reiniciar)
+            if (!_positionsInitialized) {
+              _playerX = _roadLeft + (playerLane + 0.5) * _laneWidth - _carWidth / 2;
+              _targetLane = playerLane;
+              _positionsInitialized = true;
+            }
+
+            // Actualizar límites para _playerX
+            _minPlayerX = _roadLeft;
+            _maxPlayerX = _roadLeft + roadWidth - _carWidth;
+
             return Stack(
-              children: [  
+              children: [
+                
+                // Fondo
+                Container(color: Colors.grey.shade900),
+
                 // Carretera
                 Align(
                   alignment: Alignment.center,
@@ -611,11 +846,8 @@ Widget _buildGameContent() {
                     width: roadWidth,
                     height: constraints.maxHeight,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF3A3A3A),
-                      border: Border(
-                        left: BorderSide(color: Colors.white, width: 3),
-                        right: BorderSide(color: Colors.white, width: 3),
-                      ),
+                      color: Colors.grey.shade800,
+                      border: Border.all(color: Colors.white30, width: 2),
                     ),
                   ),
                 ),
@@ -628,11 +860,11 @@ Widget _buildGameContent() {
                     bottom: 0,
                     child: Container(
                       width: 4,
-                      color: Colors.white70,
+                      color: Colors.white24,
                     ),
                   ),
 
-                // Obstáculos
+                // Obstáculos (sprites)
                 for (final o in _obstacles)
                   Positioned(
                     left: _roadLeft + (o.lane + 0.5) * _laneWidth - o.width / 2,
@@ -645,7 +877,25 @@ Widget _buildGameContent() {
                     ),
                   ),
 
-                // Power ups
+                // Contornos de hitbox de obstáculos (debug)
+                if (_showHitboxes)
+                  for (final o in _obstacles)
+                    Positioned(
+                      left: _roadLeft + (o.lane + 0.5) * _laneWidth - o.width / 2,
+                      top: o.y - o.height * _obstacleHitboxFactor(o.assetPath),
+                      width: o.width,
+                      height: o.height * _obstacleHitboxFactor(o.assetPath) * 2,
+                      child: IgnorePointer(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.redAccent.withOpacity(0.08),
+                            border: Border.all(color: Colors.redAccent, width: 2),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                // Power ups (sprites)
                 for (final p in _powerUps)
                   Positioned(
                     left: _roadLeft + (p.lane + 0.5) * _laneWidth - p.width / 2,
@@ -658,19 +908,69 @@ Widget _buildGameContent() {
                     ),
                   ),
 
-                // Carro del jugador
+                // Contornos de hitbox de power ups (debug)
+                if (_showHitboxes)
+                  for (final p in _powerUps)
+                    Positioned(
+                      left: _roadLeft + (p.lane + 0.5) * _laneWidth - p.width / 2,
+                      top: p.y - p.height * 0.35,
+                      width: p.width,
+                      height: p.height * 0.35 * 2,
+                      child: IgnorePointer(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.greenAccent.withOpacity(0.08),
+                            border: Border.all(color: Colors.greenAccent, width: 2),
+                          ),
+                        ),
+                      ),
+                    ),
+                      
+                // Carro del jugador (usar _playerX para movimiento suave)
                 Positioned(
-                  left: _roadLeft +
-                      (playerLane + 0.5) * _laneWidth -
-                      _carWidth / 2,
+                  left: _playerX,
                   top: _playerY - _carHeight / 2,
                   width: _carWidth,
                   height: _carHeight,
-                  child: Image.asset(
-                    widget.carAsset,
-                    fit: BoxFit.contain,
+                  child: Builder(
+                    builder: (_) {
+                      // tilt proporcional a la velocidad lateral (normalizada por _lateralSpeed)
+                      final double norm = (_lateralSpeed == 0) ? 0.0 : (_lastLateralVelocity / _lateralSpeed);
+                      double angle = (norm * _maxTilt).clamp(-_maxTilt, _maxTilt);
+                      // opcional: añadir un pequeño tilt según el offset con respecto al centro del carril
+                      final double centerOfCurrentLane = _roadLeft + (_currentPlayerLane + 0.5) * _laneWidth;
+                      final double offset = ((_playerX + _carWidth / 2) - centerOfCurrentLane) / _laneWidth;
+                      angle += (offset * _maxTilt * 0.25);
+                      angle = angle.clamp(-_maxTilt, _maxTilt);
+
+                      return Transform.rotate(
+                        angle: angle,
+                        alignment: Alignment.center,
+                        child: Image.asset(
+                          widget.carAsset,
+                          fit: BoxFit.contain,
+                        ),
+                      );
+                    },
                   ),
                 ),
+
+                // Contorno de hitbox del jugador (debug)
+                if (_showHitboxes)
+                  Positioned(
+                    left: _playerX,
+                    top: _playerY - _carHeight * 0.30,
+                    width: _carWidth,
+                    height: _carHeight * 0.30 * 2,
+                    child: IgnorePointer(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.blueAccent.withOpacity(0.06),
+                          border: Border.all(color: Colors.blueAccent, width: 2),
+                        ),
+                      ),
+                    ),
+                  ),
 
                 // HUD gasolina
                 Positioned(
@@ -792,9 +1092,57 @@ Widget _buildGameContent() {
                     child: const Icon(Icons.arrow_right),
                   ),
                 ),
-              ],
+                Positioned(
+      top: 20,
+      right: 20,
+      child: IconButton(
+        iconSize: 40,
+        color: Colors.white,
+        icon: const Icon(Icons.pause_circle_filled),
+        onPressed: () {
+          if (_isGameOver) return;
+
+          _gameLoopTimer?.cancel();
+
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) {
+              return AlertDialog(
+                title: const Text('Pausa'),
+                content: const Text('El juego está pausado.'),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _gameLoopTimer = Timer.periodic(
+                        const Duration(milliseconds: 16),
+                        (timer) => _updateGame(0.016),
+                      );
+                    },
+                    child: const Text('Reanudar'),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _finishRunAndExit();
+                    },
+                    
+                    child: const Text('Salir'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      ),
+    ),
+   ],
             );
           },
-        );
+        ),
+      ),
+    );
   }
 }
+

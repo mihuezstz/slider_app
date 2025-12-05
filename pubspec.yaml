@@ -28,6 +28,7 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  just_audio: ^0.9.40
   flutter:
     sdk: flutter
 
@@ -60,9 +61,13 @@ flutter:
     - assets/obstaculos/
     - assets/powerups/
     - assets/escenarios/
-    - assets/sonidos/
+    - assets/audio/bg_music.mp3
+    - assets/audio/coin.wav
+    - assets/audio/car_accel.wav
     - assets/logo_unison.png
-
+    - assets/audio/fuel.mp3
+    - assets/audio/crash.mp3
+    - assets/audio/tire.mp3
 
 
   # An image asset can refer to one or more resolution-specific "variants", see
