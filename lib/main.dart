@@ -1,4 +1,5 @@
-import 'dart:js' as js;
+// Reemplaza el import directo de dart:js por un import condicional
+import 'src/env_io.dart' if (dart.library.html) 'src/env_web.dart' as web_env;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -54,15 +55,15 @@ const List<int> kCarPrices = [
   100,
 ];
 
-
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Inicializar Supabase distinto para Web / Mobile
   if (kIsWeb) {
     // En web leemos las variables desde web/icons/config.js
-    final url = js.context['env']['SUPABASE_URL'] as String?;
-    final anon = js.context['env']['SUPABASE_ANON'] as String?;
+    final web = web_env.getWebEnv();
+    final url = web?['SUPABASE_URL'];
+    final anon = web?['SUPABASE_ANON'];
 
     if (url == null || anon == null) {
       throw Exception('No se encontraron SUPABASE_URL / SUPABASE_ANON en config.js');
@@ -70,13 +71,22 @@ Future<void> main() async {
 
     await Supabase.initialize(url: url, anonKey: anon);
   } else {
-    // En móvil / escritorio usamos el archivo .env
-    await dotenv.load(fileName: ".env");
+    // En móvil / escritorio: hardcodea las claves
+    try {
+      await dotenv.load(fileName: ".env");
+    } catch (_) {
+      debugPrint('⚠️ .env no encontrado en móvil, usando valores por defecto');
+    }
 
-    await Supabase.initialize(
-      url: dotenv.env['SUPABASE_URL']!,
-      anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
-    );
+    // Usa tus credenciales de Supabase reales
+    const String url = 'https://itvumldppjrcnxagrydr.supabase.co';
+    const String key = 'sb_publishable_Lp69CVXz7wZzHpDyLeoDXQ_us5lPeKY';
+
+    if (url.isEmpty || key.isEmpty) {
+      throw Exception('Faltan SUPABASE_URL / SUPABASE_ANON_KEY');
+    }
+
+    await Supabase.initialize(url: url, anonKey: key);
   }
 
   runApp(const MyApp());
