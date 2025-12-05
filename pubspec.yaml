@@ -60,7 +60,6 @@ flutter:
     - assets/cars/
     - assets/obstaculos/
     - assets/powerups/
-    - assets/escenarios/
     - assets/audio/bg_music.mp3
     - assets/audio/coin.wav
     - assets/audio/car_accel.wav
@@ -68,6 +67,7 @@ flutter:
     - assets/audio/fuel.mp3
     - assets/audio/crash.mp3
     - assets/audio/tire.mp3
+      
 
 
   # An image asset can refer to one or more resolution-specific "variants", see
