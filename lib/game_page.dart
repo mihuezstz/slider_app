@@ -71,6 +71,8 @@ class _PowerUp {
 }
 
 class _GamePageState extends State<GamePage> {
+  // Helper: convierte opacidad 0.0-1.0 a valor alfa 0-255
+  int _alphaFromOpacity(double opacity) => (opacity.clamp(0.0, 1.0) * 255).round();
 
   void _finishRunAndExit() {
     _gameLoopTimer?.cancel();             // detener loop
@@ -138,7 +140,11 @@ class _GamePageState extends State<GamePage> {
   bool _pressingRight = false;
   final double _lateralSpeed = 500.0; // velocidad de movimiento lateral
 
-  //variables para tilt cuando se desplaza IZQ/DER
+  // Trackeo de pointers para los botones táctiles (evita solapamientos)
+  int? _leftPointerId;
+  int? _rightPointerId;
+  
+//variables para tilt cuando se desplaza IZQ/DER
   double _prevPlayerX = 0.0;
   double _lastLateralVelocity = 0.0; // px/s
   final double _maxTilt = 0.3; // radianes
@@ -148,6 +154,7 @@ class _GamePageState extends State<GamePage> {
 
   // Control: si true el coche se recentra (interpolación) cuando no se está moviendo.
   // Si false, al soltar la tecla el coche se queda en la posición X actual.
+  // _autoCenter ya no se usa: el movimiento es siempre hacia _targetLane
   bool _autoCenter = false;
 
   // Nueva: límites para la posición X del jugador
@@ -250,26 +257,16 @@ class _GamePageState extends State<GamePage> {
       _spawnEntity();
     }
 
-    // MOVIMIENTO LATERAL:
-    // - Si se mantiene la tecla izquierda/derecha, mover continuamente con _lateralSpeed
+    // MOVIMIENTO LATERAL: movimiento continuo mientras se mantiene el botón
     if (_laneWidth != 0 && _carWidth != 0) {
+      final double moveAmount = _lateralSpeed * dt;
       if (_pressingLeft && !_pressingRight) {
-        _playerX -= _lateralSpeed * dt;
+        _playerX = (_playerX - moveAmount).clamp(_minPlayerX, _maxPlayerX);
       } else if (_pressingRight && !_pressingLeft) {
-        _playerX += _lateralSpeed * dt;
-      } else {
-        // Si _autoCenter está activado, suavizar hacia target lane cuando no se presiona.
-        // Si no, no hacemos recentering: el coche se queda donde lo soltaste.
-        if (_autoCenter) {
-          final double targetX = _roadLeft + (_targetLane + 0.5) * _laneWidth - _carWidth / 2;
-          final double dx = targetX - _playerX;
-          final double t = (dt * _laneChangeSpeed).clamp(0.0, 1.0);
-          _playerX += dx * t;
-        }
+        _playerX = (_playerX + moveAmount).clamp(_minPlayerX, _maxPlayerX);
       }
-
-      // Limitar dentro de la carretera
-      _playerX = _playerX.clamp(_minPlayerX, _maxPlayerX);
+      // Actualizar carril según la posición actual
+      playerLane = _currentPlayerLane;
     }
 
     // Calcular velocidad lateral para tilt
@@ -670,33 +667,31 @@ class _GamePageState extends State<GamePage> {
         ),
         child: Stack(
         children: [
-        
-       RawKeyboardListener(
-        focusNode: _focusNode,
-        autofocus: true,
-        onKey: (event) {
-          if (event is RawKeyDownEvent) {
-            final key = event.logicalKey;
-            if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.keyA) {
-              _pressingLeft = true;
-            } else if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.keyD) {
-              _pressingRight = true;
-            }
-          } else if (event is RawKeyUpEvent) {
-            final key = event.logicalKey;
-            if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.keyA) {
-              _pressingLeft = false;
-            } else if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.keyD) {
-              _pressingRight = false;
-            }
-          }
-        },
-        // Funcion con el contenido del juego
-        child: _buildGameContent(),
-       ),
-      ],
+          RawKeyboardListener(
+            focusNode: _focusNode,
+            autofocus: true,
+            onKey: (event) {
+              if (event is RawKeyDownEvent) {
+                final key = event.logicalKey;
+                if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.keyA) {
+                  _pressingLeft = true;
+                } else if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.keyD) {
+                  _pressingRight = true;
+                }
+              } else if (event is RawKeyUpEvent) {
+                final key = event.logicalKey;
+                if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.keyA) {
+                  _pressingLeft = false;
+                } else if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.keyD) {
+                  _pressingRight = false;
+                }
+              }
+            },
+            child: _buildGameContent(),
+          ),
+        ],
+      ),
     ),
-  ),
 );
 
 }
@@ -870,8 +865,8 @@ Widget _buildGameContent() {
 
                 // HUD gasolina
                 Positioned(
-                  left: 16,
-                  right: 16,
+                  left: 30,
+                  right: 30,
                   top: 16,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -919,8 +914,8 @@ Widget _buildGameContent() {
 
                 // HUD llantas + monedas
                 Positioned(
-                  left: 16,
-                  right: 16,
+                  left: 30,
+                  right: 30,
                   top: 52,
                   child: Row(
                     children: [
@@ -967,25 +962,125 @@ Widget _buildGameContent() {
                   ),
                 ),
 
-                // Botón izquierda
+                // Botón izquierda (orilla izquierda) — usa Listener y pointer id
                 Positioned(
-                  left: 16,
-                  bottom: 16,
-                  child: FloatingActionButton.small(
-                    heroTag: 'left',
-                    onPressed: _moveLeft,
-                    child: const Icon(Icons.arrow_left),
+                  left: -9,
+                  top: constraints.maxHeight / 2 + 290,
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: (e) {
+                      if (_leftPointerId == null) {
+                        _leftPointerId = e.pointer;
+                        // Mantener presionado mueve continuamente; no llamar a _moveLeft()
+                        setState(() {
+                          _pressingLeft = true;
+                          _pressingRight = false;
+                        });
+                      }
+                    },
+                    onPointerUp: (e) {
+                      if (_leftPointerId == e.pointer) {
+                        _leftPointerId = null;
+                        setState(() => _pressingLeft = false);
+                      }
+                    },
+                    onPointerCancel: (e) {
+                      if (_leftPointerId == e.pointer) {
+                        _leftPointerId = null;
+                        setState(() => _pressingLeft = false);
+                      }
+                    },
+                    child: Container(
+                      width: 96, // zona táctil mayor que el botón visual
+                      height: 120,
+                      alignment: Alignment.center,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 90),
+                        width: 80,
+                        height: 100,
+                        decoration: BoxDecoration(
+                          color: Colors.blueAccent.withAlpha(
+                            _alphaFromOpacity(_pressingLeft ? 0.95 : 0.65),
+                          ),
+                          borderRadius: BorderRadius.circular(14),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.blue.withAlpha(
+                                _alphaFromOpacity(_pressingLeft ? 0.8 : 0.35),
+                              ),
+                              blurRadius: _pressingLeft ? 14 : 8,
+                              spreadRadius: _pressingLeft ? 2 : 0,
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          Icons.arrow_left,
+                          color: Colors.white,
+                          size: _pressingLeft ? 30 : 26,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
 
-                // Botón derecha
+                // Botón derecha (orilla derecha) — usa Listener y pointer id
                 Positioned(
-                  right: 16,
-                  bottom: 16,
-                  child: FloatingActionButton.small(
-                    heroTag: 'right',
-                    onPressed: _moveRight,
-                    child: const Icon(Icons.arrow_right),
+                  right: 0,
+                  top: constraints.maxHeight / 2 + 290,
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: (e) {
+                      if (_rightPointerId == null) {
+                        _rightPointerId = e.pointer;
+                        // Mantener presionado mueve continuamente; no llamar a _moveRight()
+                        setState(() {
+                          _pressingRight = true;
+                          _pressingLeft = false;
+                        });
+                      }
+                    },
+                    onPointerUp: (e) {
+                      if (_rightPointerId == e.pointer) {
+                        _rightPointerId = null;
+                        setState(() => _pressingRight = false);
+                      }
+                    },
+                    onPointerCancel: (e) {
+                      if (_rightPointerId == e.pointer) {
+                        _rightPointerId = null;
+                        setState(() => _pressingRight = false);
+                      }
+                    },
+                    child: Container(
+                      width: 80,
+                      height: 120,
+                      alignment: Alignment.center,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 90),
+                        width: 80,
+                        height: 100,
+                        decoration: BoxDecoration(
+                          color: Colors.blueAccent.withAlpha(
+                            _alphaFromOpacity(_pressingRight ? 0.95 : 0.65),
+                          ),
+                          borderRadius: BorderRadius.circular(14),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.blue.withAlpha(
+                                _alphaFromOpacity(_pressingRight ? 0.8 : 0.35),
+                              ),
+                              blurRadius: _pressingRight ? 14 : 8,
+                              spreadRadius: _pressingRight ? 2 : 0,
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          Icons.arrow_right,
+                          color: Colors.white,
+                          size: _pressingRight ? 30 : 26,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ],
