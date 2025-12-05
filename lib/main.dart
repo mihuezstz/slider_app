@@ -19,12 +19,6 @@ const List<String> kCarAssets = [
   'assets/cars/chevyblue_car.png',
   'assets/cars/tsuru_car.png',
   'assets/cars/police_car.png',
-  'assets/cars/deportivo_car.png',
-  'assets/cars/espacial_car.png',
-  'assets/cars/hotdog_car.png',
-  'assets/cars/norteño_car.png',
-  'assets/cars/motoPizza_car.png',
-  'assets/cars/motoRobot_car.png',
 ];
 
 /// Nombres visibles de los carros
@@ -33,19 +27,10 @@ const List<String> kCarNames = [
   'Chevy azul',
   'Tsuru',
   'Patrulla eléctrica',
-  'Deportivo',
-  'Carrito Espacial',
-  'Hot dog car',
-  'Norteño car',
-  'Moto Pizza',
-  'Moto Robotica',
 ];
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  //Cargar variables de entorno desde .env
-  await dotenv.load(fileName: ".env");
 
   // Inicializar Supabase distinto para Web / Mobile
   if (kIsWeb) {
@@ -189,7 +174,6 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   late final SupabaseService _supabaseService;
-  
 
   // Nombre del jugador
   final TextEditingController _nameController = TextEditingController();
@@ -213,7 +197,36 @@ class _MyHomePageState extends State<MyHomePage> {
   String get _selectedCarAsset =>
       kCarAssets[_selectedCarIndex.clamp(0, kCarAssets.length - 1)];
   
- 
+  //---------------------StartGame-----------------------
+
+  void _startGame() async {
+    if (_playerName.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Escribe tu nombre antes de jugar'),
+        ),
+      );
+      return;
+    }
+
+    final int? coinsEarned = await Navigator.push<int>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EscenariosPage(
+          carAsset: _selectedCarAsset,
+          startingCoins: _credits,
+        ),
+      ),
+    );
+
+    if (coinsEarned != null && coinsEarned > 0) {
+      setState(() {
+        _credits += coinsEarned;
+      });
+      await _saveCreditsToSupabase();
+    }
+  }
+
 //-------------METODO PARA EL BOTON-----------------
    Widget _buildArcadeButton() {
     return GestureDetector(
@@ -283,95 +296,49 @@ class _MyHomePageState extends State<MyHomePage> {
   void initState() {
     super.initState();
     _supabaseService = SupabaseService();
-    //_signInServiceUser();
-    //_initializedPlayerCredits();
+    _signInServiceUser();
   }
 
-  /// LOGIN + RECUPERAR CREDITOS DEL JUGAR  (AUTH_EMAIL / AUTH_PASSWORD)
-  Future<void> _initializedPlayerCredits() async {
-    if (_playerName.isEmpty) return;
-
+  /// Hace sign-in con el usuario de servicio de Supabase (AUTH_EMAIL / AUTH_PASSWORD)
+  Future<void> _signInServiceUser() async {
     try {
-      if (!_isSignedIn) {
-      //Login en caso de que este listo supabase
       await _supabaseService.signIn(
-        email: dotenv.env['AUTH_EMAIL']!,
-        password: dotenv.env['AUTH_PASSWORD']!,
+        email: dotenv.env['AUTH_EMAIL'] ?? '',
+        password: dotenv.env['AUTH_PASSWORD'] ?? '',
       );
-    }
-      final points = await _supabaseService.retrievePoints(
-        playerName: _playerName
-        );
-
       setState(() {
-        _credits = points ?? 0;
         _isSignedIn = true;
-    }); 
+      });
     } catch (e) {
-      print("Error en Login y recuperación de créditos: $e");
+      // Solo mostramos un snack si falla, pero el juego puede seguir sin Supabase
+      debugPrint('Error al iniciar sesión en Supabase: $e');
     }
   }
 
-  /// GUARDAR LOS CRÉDITOS ANTES DE JUGAR 
-  Future<void> _saveCreditsBeforeStart() async {
-    if (_playerName.isEmpty) return;
+  /// Carga créditos desde Supabase usando el nombre actual del jugador
+  Future<void> _loadCreditsFromSupabase() async {
+    if (!_isSignedIn || _playerName.isEmpty) return;
+
+    final points = await _supabaseService.retrievePoints(
+      playerName: _playerName,
+    );
+
+    if (points != null) {
+      setState(() {
+        _credits = points;
+      });
+    }
+  }
+
+  /// Guarda créditos en Supabase para el jugador actual
+  Future<void> _saveCreditsToSupabase() async {
+    if (!_isSignedIn || _playerName.isEmpty) return;
 
     await _supabaseService.checkAndUpsertPlayer(
-      playerName: _playerName, 
+      playerName: _playerName,
       score: _credits,
     );
   }
-
-  /// SUMAR CRÉDITOS DESPUÉS DE JUGAR
-  void _incrementCredits(int amount) {
-    setState(() {
-      _credits += amount;      
-    });
-
-
-    _supabaseService.checkAndUpsertPlayer(
-      playerName: _playerName, 
-      score: _credits
-      );
-    }
-
-  //---------------------StartGame-----------------------
-
-  Future<void> _startGame() async {
-    //Asegurar que _playerName este actualizado
-    _playerName = _nameController.text.trim();
-
-    if (_playerName.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Escribe tu nombre antes de jugar'), 
-        ),
-      );
-      return;
-    }  
-    
-    //Auntenticar y cargar créditos antes de iniciar
-    await _initializedPlayerCredits();
-
-    //Guardamos créditos antes de jugar
-    await _saveCreditsBeforeStart();
-
-    //Inicia la selección de escenario
-    final result = await Navigator.push(
-      context, 
-      MaterialPageRoute(
-        builder: (_) => EscenariosPage(
-          carAsset: _selectedCarAsset, 
-          startingCoins: _credits,
-          ),
-        ),
-      );
-
-      //Game page regresa los creditos finales
-      if (result is int) {
-        _incrementCredits(result);
-      }
-   }
 
   @override
   void dispose() {
@@ -472,10 +439,9 @@ class _MyHomePageState extends State<MyHomePage> {
                       borderRadius: BorderRadius.circular(16),
                     ),
                   ),
-                  onChanged:  (value)  {
-                    setState(() {
-                      _playerName = value.trim();
-                    });
+                  onChanged: (value) {
+                    setState(() => 
+                      _playerName = value.trim());
                   },     
                 ),
 
@@ -515,7 +481,7 @@ class _MyHomePageState extends State<MyHomePage> {
                     IconButton(
                       tooltip: 'Recargar créditos desde Supabase',
                       onPressed:
-                      _playerName.isEmpty ? null : _saveCreditsBeforeStart,
+                      _playerName.isEmpty ? null : _loadCreditsFromSupabase,
                       icon: const Icon(Icons.refresh),
                     ),
                   ],

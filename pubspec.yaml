@@ -28,6 +28,9 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+
+  shared_preferences: ^2.2.2
+
   flutter:
     sdk: flutter
 
@@ -63,8 +66,6 @@ flutter:
     - assets/escenarios/
     - assets/sonidos/
     - assets/logo_unison.png
-    - assets/.env
-
 
 
   # An image asset can refer to one or more resolution-specific "variants", see

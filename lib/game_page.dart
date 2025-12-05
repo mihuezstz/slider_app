@@ -71,11 +71,19 @@ class _PowerUp {
 }
 
 class _GamePageState extends State<GamePage> {
+
   void _finishRunAndExit() {
     _gameLoopTimer?.cancel();             // detener loop
     widget.onCoinsEarned?.call(_coinsThisRun); // avisar cuántas monedas se ganaron
     Navigator.pop(context, _coinsThisRun);               // regresar a la pantalla principal
+
   }
+
+  // Tiempo total sobrevivido en la partida (segundos)
+  double _survivalTime = 0.0;
+
+  // Cuántas monedas ya se han dado por tiempo (para no repetir)
+  int _coinsFromTime = 0;
 
   // Carriles
   static const int laneCount = 3;
@@ -163,31 +171,55 @@ class _GamePageState extends State<GamePage> {
 
   /// Inicia / reinicia el loop del juego
   void _startLoop() {
+    // Detenemos cualquier loop anterior
     _gameLoopTimer?.cancel();
+
+    // Reset de estado básico
     _isGameOver = false;
     _obstacles.clear();
     _powerUps.clear();
     _spawnTimer = 0.0;
 
+    // Recursos del jugador
     _fuel = 1.0;
     _spareTires = _maxTires;
 
-    _coinsThisRun = 0;   // reinicia monedas de la corrida
+    // Monedas y tiempo de ESTA partida
+    _coinsThisRun = 0;     // monedas de la corrida actual
+    _survivalTime = 0.0;   // tiempo que llevamos vivos
+    _coinsFromTime = 0;    // cuántas monedas ya dimos por tiempo
 
-    // Reiniciar objetivo de carril
+    // Posición del carro
     playerLane = 1;
     _targetLane = 1;
-    _positionsInitialized = false; // para re-inicializar _playerX en el next layout
+    _positionsInitialized = false; // para re-inicializar _playerX en el próximo layout
 
+    // Iniciar loop del juego (60 fps aprox)
     _gameLoopTimer = Timer.periodic(
       const Duration(milliseconds: 16),
           (timer) => _updateGame(0.016),
     );
   }
 
+
   /// Actualiza el estado del juego cada frame
   void _updateGame(double dt) {
     if (_isGameOver || _screenHeight == 0) return;
+
+    // 🔹 1) Aumentar tiempo sobrevivido
+    _survivalTime += dt;
+
+// 🔹 2) Calcular cuántas monedas tocan por tiempo (1 moneda cada 10s)
+    final int newCoinsFromTime = (_survivalTime ~/ 10); // división entera
+
+// Si cruzamos un nuevo bloque de 10 segundos → dar monedas nuevas
+    if (newCoinsFromTime > _coinsFromTime) {
+      final diff = newCoinsFromTime - _coinsFromTime;
+      _coinsFromTime = newCoinsFromTime;
+
+      _coinsThisRun += diff;   // sumamos esas monedas a las monedas de la partida
+    }
+
 
     // Consumir gasolina
     _fuel -= _fuelConsumptionPerSecond * dt;
