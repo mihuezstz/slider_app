@@ -60,8 +60,11 @@ flutter:
     - assets/obstaculos/
     - assets/powerups/
     - assets/escenarios/
-    - assets/sonidos/
     - assets/logo_unison.png
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 
 
 
