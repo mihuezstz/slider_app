@@ -63,6 +63,7 @@ flutter:
     - assets/escenarios/
     - assets/sonidos/
     - assets/logo_unison.png
+    - assets/.env
 
 
 

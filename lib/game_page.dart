@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'main.dart';
 
 /// Pantalla principal de juego.2
 /// Recibe el asset del carro que eligió la persona usuaria.
@@ -73,7 +74,7 @@ class _GamePageState extends State<GamePage> {
   void _finishRunAndExit() {
     _gameLoopTimer?.cancel();             // detener loop
     widget.onCoinsEarned?.call(_coinsThisRun); // avisar cuántas monedas se ganaron
-    Navigator.pop(context);               // regresar a la pantalla principal
+    Navigator.pop(context, _coinsThisRun);               // regresar a la pantalla principal
   }
 
   // Carriles
@@ -501,7 +502,7 @@ class _GamePageState extends State<GamePage> {
             TextButton(
               onPressed: () {
                 // Cerrar dialogo, reiniciar estado y volver a empezar
-                Navigator.pop(context);
+                Navigator.pop(context, _coinsThisRun);
                 setState(() => playerLane = 1);
                 _startLoop();
               },
@@ -510,7 +511,7 @@ class _GamePageState extends State<GamePage> {
             TextButton(
               onPressed: () {
                 // Cerrar dialogo y terminar la partida
-                Navigator.pop(context);
+                Navigator.pop(context, _coinsThisRun);
                 _finishRunAndExit();
               },
               child: const Text('Salir'),
@@ -741,22 +742,22 @@ Widget _buildGameContent() {
                   ),
 
                 // Contornos de hitbox de obstáculos (debug)
-                if (_showHitboxes)
-                  for (final o in _obstacles)
-                    Positioned(
-                      left: _roadLeft + (o.lane + 0.5) * _laneWidth - o.width / 2,
-                      top: o.y - o.height * _obstacleHitboxFactor(o.assetPath),
-                      width: o.width,
-                      height: o.height * _obstacleHitboxFactor(o.assetPath) * 2,
-                      child: IgnorePointer(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.redAccent.withOpacity(0.08),
-                            border: Border.all(color: Colors.redAccent, width: 2),
-                          ),
-                        ),
-                      ),
-                    ),
+                //if (_showHitboxes)
+                  //for (final o in _obstacles)
+                    //Positioned(
+                      //left: _roadLeft + (o.lane + 0.5) * _laneWidth - o.width / 2,
+                      //top: o.y - o.height * _obstacleHitboxFactor(o.assetPath),
+                      //width: o.width,
+                      //height: o.height * _obstacleHitboxFactor(o.assetPath) * 2,
+                      //child: IgnorePointer(
+                        //child: Container(
+                          //decoration: BoxDecoration(
+                            //color: Colors.redAccent.withOpacity(0.08),
+                            //border: Border.all(color: Colors.redAccent, width: 2),
+                          //),
+                        //),
+                     // ),
+                    //),
 
                 // Power ups (sprites)
                 for (final p in _powerUps)
@@ -772,22 +773,22 @@ Widget _buildGameContent() {
                   ),
 
                 // Contornos de hitbox de power ups (debug)
-                if (_showHitboxes)
-                  for (final p in _powerUps)
-                    Positioned(
-                      left: _roadLeft + (p.lane + 0.5) * _laneWidth - p.width / 2,
-                      top: p.y - p.height * 0.35,
-                      width: p.width,
-                      height: p.height * 0.35 * 2,
-                      child: IgnorePointer(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.greenAccent.withOpacity(0.08),
-                            border: Border.all(color: Colors.greenAccent, width: 2),
-                          ),
-                        ),
-                      ),
-                    ),
+                //if (_showHitboxes)
+                  //for (final p in _powerUps)
+                    //Positioned(
+                      //left: _roadLeft + (p.lane + 0.5) * _laneWidth - p.width / 2,
+                      //top: p.y - p.height * 0.35,
+                      //width: p.width,
+                      //height: p.height * 0.35 * 2,
+                      //child: IgnorePointer(
+                        //child: Container(
+                          //decoration: BoxDecoration(
+                            //color: Colors.greenAccent.withOpacity(0.08),
+                            //border: Border.all(color: Colors.greenAccent, width: 2),
+                          //),
+                        //),
+                      //),
+                   // ),
 
                 // Carro del jugador (usar _playerX para movimiento suave)
                 Positioned(
@@ -819,21 +820,21 @@ Widget _buildGameContent() {
                 ),
 
                 // Contorno de hitbox del jugador (debug)
-                if (_showHitboxes)
-                  Positioned(
-                    left: _playerX,
-                    top: _playerY - _carHeight * 0.30,
-                    width: _carWidth,
-                    height: _carHeight * 0.30 * 2,
-                    child: IgnorePointer(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.blueAccent.withOpacity(0.06),
-                          border: Border.all(color: Colors.blueAccent, width: 2),
-                        ),
-                      ),
-                    ),
-                  ),
+                //if (_showHitboxes)
+                  //Positioned(
+                    //left: _playerX,
+                    //top: _playerY - _carHeight * 0.30,
+                    //width: _carWidth,
+                    //height: _carHeight * 0.30 * 2,
+                    //child: IgnorePointer(
+                      //child: Container(
+                        //decoration: BoxDecoration(
+                          //color: Colors.blueAccent.withOpacity(0.06),
+                          //border: Border.all(color: Colors.blueAccent, width: 2),
+                        //),
+                      //),
+                    //),
+                  //),
 
                 // HUD gasolina
                 Positioned(

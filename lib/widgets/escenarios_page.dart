@@ -207,8 +207,8 @@ class EscenariosPage  extends StatefulWidget{
                     final isCenter = tappedIndex == index;
 
                       return GestureDetector(
-                        onTap: () {
-                           Navigator.push(
+                        onTap: () async {
+                           final result = await Navigator.push(
                             context,
                            MaterialPageRoute(
                               builder: (_) => GamePage(
@@ -218,6 +218,7 @@ class EscenariosPage  extends StatefulWidget{
                               ),
                             ),
                           );
+                          Navigator.pop(context, result);
                         },
 
                           child: AnimatedContainer(
