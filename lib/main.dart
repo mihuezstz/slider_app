@@ -58,7 +58,7 @@ const List<int> kCarPrices = [
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  //await dotenv.load(fileName: ".env");
+  await dotenv.load(fileName: ".env");
 
   // Inicializar Supabase distinto para Web / Mobile
   if (kIsWeb) {
