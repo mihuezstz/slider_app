@@ -23,18 +23,6 @@ class _EscenariosPageState extends State<EscenariosPage>
     with SingleTickerProviderStateMixin {
   final List<Map<String, String>> escenarios = const [
     {
-      'name': 'Anime',
-      'image': 'assets/escenarios/anime_Background.jpg',
-    },
-    {
-      'name': 'Bosque',
-      'image': 'assets/escenarios/bosque_Background.jpg',
-    },
-    {
-      'name': 'Ciudad Cartoon',
-      'image': 'assets/escenarios/cartoon_Background.jpg',
-    },
-    {
       'name': 'Desierto',
       'image': 'assets/escenarios/desierto_Background.jpg',
     },
@@ -43,16 +31,12 @@ class _EscenariosPageState extends State<EscenariosPage>
       'image': 'assets/escenarios/espacio_Background.jpg',
     },
     {
-      'name': 'Futurista',
-      'image': 'assets/escenarios/futurista_Background.jpg',
+      'name': 'Playa',
+      'image': 'assets/escenarios/mar_Background.jpg',
     },
     {
-      'name': 'Pixel Art',
-      'image': 'assets/escenarios/pixelArt_Background.jpg',
-    },
-    {
-      'name': 'Snow',
-      'image': 'assets/escenarios/snow_Background.png',
+      'name': 'Nevado',
+      'image': 'assets/escenarios/nevado_Background.jpg',
     },
   ];
 
