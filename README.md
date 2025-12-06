@@ -1,10 +1,10 @@
 # slider_app
 
 # integrantes del equipo
+Encinas Tapia Rodrigo,
 García Rodríguez Daniela, 
-Encinas Tapia Rodrigo, 
 Huez Santacruz Michelle, 
-Rene
+Quijada Lopez Carlos Rene
 
 ## 🔧 Configuración de Variables de Entorno
 
@@ -104,3 +104,4 @@ samples, guidance on mobile development, and a full API reference.
 - [Supabase](https://supabase.io) - Backend como servicio
 - [flutter_dotenv](https://pub.dev/packages/flutter_dotenv) - Gestión de variables de entorno
 - [freepngimg](https://freepngimg.com/png/148675-car-top-vector-view-free-hd-image) - Iconos de autos utilizados en la aplicación
+-[vheer](https://www.vheer.com/app/game-assets-generator) -Imagenes generadas con IA para escenarios y carritos.
