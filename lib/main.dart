@@ -58,6 +58,8 @@ const List<int> kCarPrices = [
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  //await dotenv.load(fileName: ".env");
+
   // Inicializar Supabase distinto para Web / Mobile
   if (kIsWeb) {
     // En web leemos las variables desde web/icons/config.js
@@ -131,6 +133,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      debugShowCheckedModeBanner: false,
       title: 'Slider App',
       theme: arcadeTheme, //aqui se aplica el tema
       home: const MyHomePage(title: 'Slider App'),
